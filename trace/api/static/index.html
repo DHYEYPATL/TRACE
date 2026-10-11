@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TRACE | Trusted Real-time Asset Confidence Engine</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <!-- Top Navigation & KPI Bar -->
+  <header class="top-navbar">
+    <div class="brand">
+      <div class="brand-logo">T</div>
+      <div class="brand-text">
+        <h1>TRACE <span style="font-size: 11px; padding: 2px 6px; background: rgba(59,130,246,0.2); color: #3b82f6; border-radius: 4px;">v1.0 ENTERPRISE</span></h1>
+        <p>L&T Finance × Tech Tatva | Trusted Real-time Asset Confidence Engine</p>
+      </div>
+    </div>
+
+    <!-- Central View Navigation Tabs -->
+    <nav class="nav-tabs">
+      <button class="tab-btn active" onclick="switchView('dashboard')">Dashboard</button>
+      <button class="tab-btn" onclick="switchView('wizard')">Register Wizard</button>
+      <button class="tab-btn" onclick="switchView('audit')">Ledger & Audit</button>
+      <button class="tab-btn" onclick="switchView('demo')">Scenario Panel</button>
+      <button class="tab-btn" onclick="switchView('settings')">Settings & Policy</button>
+      <button class="tab-btn" onclick="switchView('health')">System Health</button>
+    </nav>
+
+    <!-- KPI Strip -->
+    <div class="kpi-strip">
+      <div class="kpi-badge">
+        <span class="dot" id="kpi-camera-dot"></span>
+        <span id="kpi-camera-text">Camera 1/1 Online</span>
+      </div>
+      <div class="kpi-badge">
+        <span class="dot" id="kpi-net-dot"></span>
+        <span id="kpi-net-text">Network Online</span>
+      </div>
+      <div class="kpi-badge">
+        <span id="kpi-fps-text">5.0 FPS | P95 1.4s</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Views Container -->
+  <main class="container">
+    
+    <!-- VIEW 1: OPERATIONS DASHBOARD -->
+    <section id="view-dashboard" class="view-section active">
+      <div class="dashboard-grid">
+        
+        <!-- Left: Live Video Feed & Camera Overlays -->
+        <div class="dashboard-left">
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-title">
+                <span>📹 Live Edge Feed</span>
+                <span id="feed-status-badge" style="font-size: 11px; color: var(--state-safe); margin-left: 8px;">● Real-Time Feed</span>
+              </div>
+              <button class="btn" onclick="refreshFeed()">🔄 Refresh Feed</button>
+            </div>
+            
+            <div class="video-container">
+              <img id="mjpeg-feed" src="/api/video/feed" alt="Live Camera Feed">
+              <div class="video-overlay-tags">
+                <div class="tag-pill" style="color: #3b82f6;">ROI Overlays Active</div>
+                <div class="tag-pill" style="color: #10b981;">People Masked in RAM</div>
+                <div class="tag-pill" style="color: #f59e0b;">Ed25519 Signed</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Review Queue (Selective Prediction: 0.60 to 0.89 Confidence) -->
+          <div class="panel" id="review-queue-panel" style="border-color: rgba(245, 158, 11, 0.3);">
+            <div class="panel-header">
+              <div class="panel-title" style="color: var(--state-unknown);">
+                <span>⚖️ Needs Review Queue (Selective Prediction)</span>
+              </div>
+              <span id="review-counter" style="font-size: 12px; color: var(--text-muted);">0 pending review</span>
+            </div>
+            <div id="review-queue-list" style="display: flex; flex-direction: column; gap: 8px;">
+              <div style="padding: 12px; text-align: center; color: var(--text-muted); font-size: 12px;">
+                No ambiguous events awaiting operator review.
+              </div>
+            </div>
+          </div>
+
+          <!-- Live Security Alert Feed -->
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-title">🚨 Active Incidents & Alerts</div>
+              <span id="alert-counter" style="font-size: 12px; color: var(--text-muted);">0 recent</span>
+            </div>
+            <div class="alert-feed-list" id="alert-feed">
+              <div style="padding: 16px; text-align: center; color: var(--text-muted); font-size: 13px;">
+                No active security violations detected. All monitored branch assets are SAFE.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: Asset Confidence & Doubt Meters -->
+        <div class="dashboard-right">
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-title">🛡️ Asset Confidence (Doubt Engine)</div>
+              <button class="btn btn-primary" onclick="switchView('wizard')">+ Add Asset</button>
+            </div>
+
+            <div class="asset-cards-list" id="asset-cards-container">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- VIEW 2: REGISTER WIZARD WITH INTERACTIVE CANVAS -->
+    <section id="view-wizard" class="view-section">
+      <div class="panel" style="max-width: 960px; margin: 0 auto;">
+        <div class="panel-header">
+          <div class="panel-title">📝 Asset Registration Wizard (Section 8.4)</div>
+          <span style="font-size: 12px; color: var(--text-muted);">Under 2-minute visual onboarding</span>
+        </div>
+
+        <!-- Step 1 & 2: Interactive Polygon Canvas on Live Frame -->
+        <div style="margin-bottom: 20px;">
+          <label style="font-size: 12px; font-weight: 600; color: var(--text-secondary); display: block; margin-bottom: 8px;">
+            Step 1: Visual ROI Canvas (Click points on the snapshot below to draw asset polygon):
+          </label>
+          <div style="position: relative; display: inline-block; width: 100%; border-radius: 8px; overflow: hidden; background: #000; border: 1px solid var(--border-subtle);">
+            <canvas id="roi-canvas" width="920" height="480" style="display: block; width: 100%; cursor: crosshair;"></canvas>
+          </div>
+          <div style="display: flex; gap: 10px; margin-top: 8px; align-items: center;">
+            <button type="button" class="btn" onclick="captureCanvasSnapshot()">📸 Freeze Camera Snapshot</button>
+            <button type="button" class="btn btn-danger" onclick="clearCanvasPoints()">✕ Clear Points</button>
+            <span id="canvas-point-count" style="font-size: 12px; color: var(--text-muted);">Points: 0</span>
+          </div>
+        </div>
+
+        <!-- Step 3 & 4: Metadata Form -->
+        <form id="wizard-form" onsubmit="handleRegisterSubmit(event)">
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+            <div>
+              <label style="font-size: 12px; color: var(--text-secondary); display: block; margin-bottom: 4px;">Asset Identifier (ID)</label>
+              <input type="text" id="wiz-id" required placeholder="e.g. safe-03" style="width: 100%; padding: 8px 12px; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: 6px; color: #fff;">
+            </div>
+            <div>
+              <label style="font-size: 12px; color: var(--text-secondary); display: block; margin-bottom: 4px;">Asset Display Name</label>
+              <input type="text" id="wiz-name" required placeholder="e.g. Gold Valuation Machine" style="width: 100%; padding: 8px 12px; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: 6px; color: #fff;">
+            </div>
+            <div>
+              <label style="font-size: 12px; color: var(--text-secondary); display: block; margin-bottom: 4px;">Asset Class</label>
+              <select id="wiz-class" style="width: 100%; padding: 8px 12px; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: 6px; color: #fff;">
+                <option value="safe">Safe (Cash/Gold Vault)</option>
+                <option value="gold_machine">Gold Valuation Machine</option>
+                <option value="printer">Laser Printer</option>
+                <option value="laptop">Workstation Laptop</option>
+                <option value="chair">Branch Chair</option>
+                <option value="stationery">Stationery Set</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size: 12px; color: var(--text-secondary); display: block; margin-bottom: 4px;">Criticality Level</label>
+              <select id="wiz-criticality" style="width: 100%; padding: 8px 12px; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: 6px; color: #fff;">
+                <option value="3">Criticality 3 (High Value / Vault)</option>
+                <option value="2">Criticality 2 (Branch Appliance)</option>
+                <option value="1">Criticality 1 (Mobile / Office Furniture)</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size: 12px; color: var(--text-secondary); display: block; margin-bottom: 4px;">Mobility Policy Mode</label>
+              <select id="wiz-mode" style="width: 100%; padding: 8px 12px; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: 6px; color: #fff;">
+                <option value="fixed">Fixed (Alert on any displacement)</option>
+                <option value="mobile">Mobile (Allowed moves during office hours)</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size: 12px; color: var(--text-secondary); display: block; margin-bottom: 4px;">Optional ArUco / QR Tag ID</label>
+              <input type="number" id="wiz-tag" placeholder="e.g. 42" style="width: 100%; padding: 8px 12px; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: 6px; color: #fff;">
+            </div>
+          </div>
+
+          <div style="margin-bottom: 16px;">
+            <label style="font-size: 12px; color: var(--text-secondary); display: block; margin-bottom: 4px;">Region Coordinates (Polygon [[x,y],...])</label>
+            <input type="text" id="wiz-region" required value="[[300, 200], [500, 200], [500, 400], [300, 400]]" style="width: 100%; padding: 8px 12px; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: 6px; color: #fff; font-family: monospace;">
+          </div>
+
+          <div style="display: flex; gap: 12px; justify-content: flex-end;">
+            <button type="button" class="btn" onclick="switchView('dashboard')">Cancel</button>
+            <button type="submit" class="btn btn-primary">Activate Asset</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <!-- VIEW 3: LEDGER & AUDIT TRAIL -->
+    <section id="view-audit" class="view-section">
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">📜 Cryptographic Evidence Ledger & Audit Trail (Demand 8)</div>
+          <div style="display: flex; gap: 10px;">
+            <button class="btn btn-primary" onclick="verifyLedgerAudit()">🛡️ Verify Cryptographic Ledger</button>
+            <button class="btn" onclick="exportLedgerCSV()">📥 Export CSV</button>
+          </div>
+        </div>
+
+        <!-- Verification Banner Result -->
+        <div id="ledger-verify-banner" style="display: none; padding: 14px 18px; border-radius: 8px; margin-bottom: 16px; font-size: 13px; font-weight: 600;"></div>
+
+        <table class="audit-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Asset</th>
+              <th>Event</th>
+              <th>Severity</th>
+              <th>Confidence</th>
+              <th>Timestamp</th>
+              <th>Status</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="events-table-body">
+            <!-- Dynamically populated -->
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- VIEW 4: SCENARIO FAULT INJECTOR (ROUND 2 PANEL) -->
+    <section id="view-demo" class="view-section">
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">⚡ Live Edge-Case Scenario Injector (Section 8.6 & Twist Playbook)</div>
+          <button class="btn btn-success" onclick="injectFault('reset')">✨ Reset All Faults</button>
+        </div>
+        <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 16px;">
+          These controls simulate live edge conditions directly on the camera frame pipeline before processing, proving system resilience under panel questioning.
+        </p>
+
+        <div class="scenario-grid">
+          <div class="scenario-btn" onclick="injectFault('cover_lens')">
+            <h4>1. Cover Lens</h4>
+            <p>Collapses sharpness & texture. CAMERA_OBSTRUCTED in ~2s.</p>
+          </div>
+          <div class="scenario-btn" onclick="injectFault('dim_lights')">
+            <h4>2. Dim Lights</h4>
+            <p>Drops brightness to 20%. Tests CLAHE illumination normalization.</p>
+          </div>
+          <div class="scenario-btn" onclick="injectFault('occlude_asset', 'safe-02')">
+            <h4>3. Occlude Safe</h4>
+            <p>Person stands in front. OCCLUDED state with slow belief decay.</p>
+          </div>
+          <div class="scenario-btn" onclick="injectFault('cut_network')">
+            <h4>4. Cut Network</h4>
+            <p>Simulates WAN failure. Edge outbox buffers signed events.</p>
+          </div>
+          <div class="scenario-btn" onclick="injectFault('move_asset', 'printer-01')">
+            <h4>5. Move Printer</h4>
+            <p>Displaces region > 15%. Triggers MOVED alert with 5 votes.</p>
+          </div>
+          <div class="scenario-btn" onclick="injectFault('remove_asset', 'laptop-03')">
+            <h4>6. Remove Laptop</h4>
+            <p>Positive-evidence rule: verifies region empty -> MISSING.</p>
+          </div>
+          <div class="scenario-btn" onclick="injectFault('open_safe_door')">
+            <h4>7. Open Safe Door</h4>
+            <p>Vault door swung open. Triggers STATE_CHANGED with 5 votes.</p>
+          </div>
+          <div class="scenario-btn" onclick="injectFault('place_unknown_object')">
+            <h4>8. Unknown Object</h4>
+            <p>Places unrecognised box in zone. Triggers NEW_OBJECT.</p>
+          </div>
+          <div class="scenario-btn" onclick="injectFault('swap_asset', 'safe-02')">
+            <h4>9. Swap Lookalike</h4>
+            <p>Replaces with different visual pattern. SWAPPED alert.</p>
+          </div>
+          <div class="scenario-btn" onclick="injectFault('knock_camera')">
+            <h4>10. Knock Camera</h4>
+            <p>Displaces landmarks > 25px. Triggers TAMPERED state.</p>
+          </div>
+          <div class="scenario-btn" style="border-color: var(--state-moved);" onclick="injectFault('tamper_ledger')">
+            <h4>11. Tamper Ledger</h4>
+            <p>Simulates insider DB row edit. 'Verify Ledger' flags RED!</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- VIEW 5: SETTINGS & POLICY TUNING (Screen 7, Section 8.2) -->
+    <section id="view-settings" class="view-section">
+      <div class="panel" style="max-width: 800px; margin: 0 auto;">
+        <div class="panel-header">
+          <div class="panel-title">⚙️ Policy & Threshold Settings</div>
+          <button class="btn btn-primary" onclick="saveSettingsForm()">Save Changes</button>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px;">
+          <div>
+            <label style="font-size: 12px; color: var(--text-secondary); display: block; margin-bottom: 4px;">Business Hours Start</label>
+            <input type="time" id="set-bh-start" value="09:30" style="width: 100%; padding: 8px; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: 6px; color: #fff;">
+          </div>
+          <div>
+            <label style="font-size: 12px; color: var(--text-secondary); display: block; margin-bottom: 4px;">Business Hours End</label>
+            <input type="time" id="set-bh-end" value="18:30" style="width: 100%; padding: 8px; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: 6px; color: #fff;">
+          </div>
+          <div>
+            <label style="font-size: 12px; color: var(--text-secondary); display: block; margin-bottom: 4px;">Missing Wait Time T2 (Seconds)</label>
+            <input type="number" id="set-t-missing" value="15" style="width: 100%; padding: 8px; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: 6px; color: #fff;">
+          </div>
+          <div>
+            <label style="font-size: 12px; color: var(--text-secondary); display: block; margin-bottom: 4px;">New Object Persistence T_new (Seconds)</label>
+            <input type="number" id="set-t-newobj" value="8" style="width: 100%; padding: 8px; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: 6px; color: #fff;">
+          </div>
+          <div>
+            <label style="font-size: 12px; color: var(--text-secondary); display: block; margin-bottom: 4px;">Moved Votes Required (Hysteresis Frames)</label>
+            <input type="number" id="set-moved-votes" value="5" style="width: 100%; padding: 8px; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: 6px; color: #fff;">
+          </div>
+          <div>
+            <label style="font-size: 12px; color: var(--text-secondary); display: block; margin-bottom: 4px;">Swap Wait Time (Seconds)</label>
+            <input type="number" id="set-t-swap" value="10" style="width: 100%; padding: 8px; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: 6px; color: #fff;">
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- VIEW 6: SYSTEM HEALTH -->
+    <section id="view-health" class="view-section">
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">🏥 System Health & Telemetry</div>
+          <span style="font-size: 12px; color: var(--text-muted);">Observability & Edge Specs</span>
+        </div>
+        
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-bottom: 20px;">
+          <div class="asset-card">
+            <span style="font-size: 12px; color: var(--text-muted);">Pipeline Processing FPS</span>
+            <h2 id="health-fps" style="font-size: 24px; font-weight: 700; color: var(--state-safe);">5.0</h2>
+          </div>
+          <div class="asset-card">
+            <span style="font-size: 12px; color: var(--text-muted);">Outbox Store-and-Forward Queue</span>
+            <h2 id="health-queue" style="font-size: 24px; font-weight: 700; color: #3b82f6;">0 pending</h2>
+          </div>
+          <div class="asset-card">
+            <span style="font-size: 12px; color: var(--text-muted);">Cryptographic Engine</span>
+            <h2 style="font-size: 18px; font-weight: 600; color: #fff;">Ed25519 + SHA256</h2>
+          </div>
+          <div class="asset-card">
+            <span style="font-size: 12px; color: var(--text-muted);">Model Representation</span>
+            <h2 style="font-size: 18px; font-weight: 600; color: #fff;">Visual DNA 384-D</h2>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Incident Detail Modal (Section 8.3 & Demand 8) -->
+  <div class="modal-overlay" id="incident-modal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div>
+          <h2 id="modal-title" style="font-size: 18px; font-weight: 700;">Incident Review</h2>
+          <span id="modal-meta" style="font-size: 12px; color: var(--text-muted);">ID: ...</span>
+        </div>
+        <button class="btn" onclick="closeModal()">✕ Close</button>
+      </div>
+
+      <!-- Before and After Comparison (With Privacy Blur) -->
+      <div class="comparison-container">
+        <div class="compare-box">
+          <img id="modal-before-img" src="" alt="Before Crop">
+          <div class="label">BEFORE (Baseline Reference)</div>
+        </div>
+        <div class="compare-box">
+          <img id="modal-after-img" src="" alt="After Crop">
+          <div class="label">AFTER (Detected Anomaly - Privacy Masked)</div>
+        </div>
+      </div>
+
+      <!-- Incident Telemetry Strip -->
+      <div style="background: var(--bg-card); padding: 14px; border-radius: 8px; margin-bottom: 16px; font-size: 12px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;">
+        <div><strong>Confidence Score:</strong> <span id="modal-confidence">0.93</span></div>
+        <div><strong>Ledger Sequence:</strong> <span id="modal-ledger-idx">#412</span></div>
+        <div><strong>Digital Signature:</strong> <span style="color: var(--state-safe);">Ed25519 VALID</span></div>
+      </div>
+
+      <!-- Operator Actions -->
+      <div style="display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap;">
+        <button class="btn btn-success" onclick="executeIncidentAction('ack')">✓ Acknowledge</button>
+        <button class="btn btn-primary" onclick="executeIncidentAction('resolve')">Resolve Incident</button>
+        <button class="btn" onclick="executeIncidentAction('false_positive')">Report False Positive</button>
+        <button class="btn" onclick="authorizeMoveFromModal()">Authorize Move (10m)</button>
+        <button class="btn" onclick="acceptBaselineFromModal()">Accept New Baseline</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

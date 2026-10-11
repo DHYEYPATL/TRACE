@@ -1,0 +1,36 @@
+# Byte-compiled / optimized files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Testing & Linting
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environments & Config secrets
+.env
+.venv/
+venv/
+env/
+
+# IDE & OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local database, cryptographic keys, and runtime artifacts
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/*.log
+data/signing_key.hex
+data/evidence/*
+!data/evidence/.gitkeep
+data/recordings/*
+!data/recordings/.gitkeep
+
+# Preserve required directory structures & static assets
+!data/aruco_stickers/
+!data/baselines/
