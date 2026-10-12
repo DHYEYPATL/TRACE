@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
-from trace.vision.embed import VisualDNAExtractor
+from trace.vision.embed import AssetDescriptor, LabSobelDescriptorV1, VisualDNAExtractor
 from trace.vision.gate import compute_ssim_grayscale
 
 
@@ -21,17 +21,30 @@ class RegionVerifier:
     centroid drift, and positive emptiness evidence.
     """
 
-    def __init__(self):
-        self.extractor = VisualDNAExtractor()
+    def __init__(self, descriptor: Optional[AssetDescriptor] = None):
+        self.extractor = descriptor if descriptor is not None else LabSobelDescriptorV1()
         # Keypoint matcher using SIFT or ORB
         try:
             self.detector = cv2.SIFT_create()
+            self.detector_name = "SIFT"
             self.norm_type = cv2.NORM_L2
         except Exception:
             self.detector = cv2.ORB_create(nfeatures=500)
+            self.detector_name = "ORB"
             self.norm_type = cv2.NORM_HAMMING
 
         self.bf = cv2.BFMatcher(self.norm_type)
+
+    def get_model_metadata(self) -> Dict[str, Any]:
+        """Reports honest model identity, feature dimensions, and matcher types."""
+        desc_meta = self.extractor.get_metadata()
+        return {
+            "descriptor": desc_meta,
+            "keypoint_detector": self.detector_name,
+            "model_version": f"{desc_meta['name']}-{desc_meta['version']}+{self.detector_name}",
+            "device": "cpu",
+            "inference_ready": True,
+        }
 
     def verify_asset(
         self,
@@ -92,7 +105,7 @@ class RegionVerifier:
                 except Exception:
                     inliers = 0
 
-            s_kp = float(min(1.0, inliers / 40.0))
+            s_kp = float(min(1.0, inliers / 15.0))
 
         # 3. Fusion score
         if low_texture_mode or inliers < 4:

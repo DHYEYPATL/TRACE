@@ -123,14 +123,14 @@ class AssetFSM:
         # 3. Temporal condition trackers
         moved = self.hold(
             "moved",
-            visible and verified and (o.drift_frac > c.move_frac),
+            visible and (verified or o.found_elsewhere) and (o.drift_frac > c.move_frac),
             o.t,
             n=c.moved_votes,
         )
 
         swapped = (not o.tag_matched) or self.hold(
             "swapped",
-            visible and (o.empty_match < 0.70) and (o.present_score < c.present),
+            visible and (o.empty_match < 0.85) and (o.present_score < c.present),
             o.t,
             secs=c.swap_s,
         )

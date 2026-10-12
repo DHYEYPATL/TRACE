@@ -26,7 +26,7 @@ logger = logging.getLogger("trace.main")
 def main():
     parser = argparse.ArgumentParser(description="TRACE: Trusted Real-time Asset Confidence Engine")
     parser.add_argument("--config", default="config/demo.yaml", help="Path to YAML configuration file")
-    parser.add_argument("--host", default="0.0.0.0", help="Web host interface")
+    parser.add_argument("--host", default="127.0.0.1", help="Web host interface (default: loopback 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8000, help="Web port")
     args = parser.parse_args()
 

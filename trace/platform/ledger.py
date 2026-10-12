@@ -105,7 +105,8 @@ class LedgerManager:
     def verify(
         self,
         db: sqlite3.Connection,
-        verify_disk_crops: bool = True
+        verify_disk_crops: bool = True,
+        trusted_verify_key: Optional[VerifyKey] = None
     ) -> Dict[str, Any]:
         """
         Verifies the full integrity of the cryptographic chain.
@@ -118,6 +119,8 @@ class LedgerManager:
 
         if not rows:
             return {"ok": True, "count": 0, "head": GENESIS, "message": "Ledger is empty (genesis)"}
+
+        vkey = trusted_verify_key if trusted_verify_key is not None else self.verify_key
 
         for idx, body_str, h, sig_hex in rows:
             body_bytes = body_str.encode("utf-8")
@@ -144,7 +147,7 @@ class LedgerManager:
 
             # 3. Cryptographic signature verification
             try:
-                self.verify_key.verify(h.encode("utf-8"), bytes.fromhex(sig_hex))
+                vkey.verify(h.encode("utf-8"), bytes.fromhex(sig_hex))
             except Exception as e:
                 return {
                     "ok": False,

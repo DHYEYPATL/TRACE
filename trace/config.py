@@ -102,6 +102,14 @@ class PrivacyConfig(BaseModel):
     retention_days: int = 30
 
 
+class SecurityConfig(BaseModel):
+    demo_mode: bool = False
+    require_auth: bool = False
+    admin_token: str = Field(default="trace-admin-secret-key")
+    operator_token: str = Field(default="trace-operator-secret-key")
+    viewer_token: str = Field(default="trace-viewer-secret-key")
+
+
 class AppConfig(BaseModel):
     site: str = "demo-branch-01"
     timezone: str = "Asia/Kolkata"
@@ -114,6 +122,7 @@ class AppConfig(BaseModel):
     alerts: AlertConfig = Field(default_factory=AlertConfig)
     ledger: LedgerConfig = Field(default_factory=LedgerConfig)
     privacy: PrivacyConfig = Field(default_factory=PrivacyConfig)
+    security: SecurityConfig = Field(default_factory=SecurityConfig)
 
     def get_timers(self) -> TimerSettings:
         profile_key = self.profile if self.profile in self.timers else "demo"

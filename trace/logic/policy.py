@@ -19,8 +19,8 @@ class PolicyEngine:
     assigns severity, and manages authorized moving workflows.
     """
 
-    def __init__(self, business_hours: BusinessHoursConfig):
-        self.bh_cfg = business_hours
+    def __init__(self, business_hours: Optional[BusinessHoursConfig] = None):
+        self.bh_cfg = business_hours if business_hours is not None else BusinessHoursConfig()
         # Active authorized moves: {asset_id: {"ends_at": float, "actor": str, "duration_m": int}}
         self.authorized_moves: Dict[str, Dict[str, Any]] = {}
         # Cooldown & deduplication tracker: {(asset_id, event_type): {"last_alert_t": float, "incident_id": str}}

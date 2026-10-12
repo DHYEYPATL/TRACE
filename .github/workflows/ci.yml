@@ -1,0 +1,59 @@
+name: TRACE CI Pipeline
+
+on:
+  push:
+    branches: [ "main", "feat/*", "fix/*" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  test-and-verify:
+    name: Test & Integrity Gates
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: Install System Dependencies (OpenCV & LibGL)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-glx libglib2.0-0
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov ruff
+
+      - name: Code Quality & Linting (Ruff)
+        run: |
+          ruff check . --ignore E501,F401,F841 || true
+
+      - name: Run Core Test Suite (Unit, Invariants, Security, DB, Ledger)
+        run: |
+          PYTHONPATH=. pytest -v tests/test_fsm.py tests/test_invariants.py tests/test_ledger.py tests/test_policy.py tests/test_security_api.py tests/test_db_recovery.py
+
+      - name: Run Real Computer-Vision E2E Scenario Tests
+        run: |
+          PYTHONPATH=. pytest -v tests/test_scenarios_e2e.py
+
+      - name: Run Real Frame-Level Benchmark Evaluator
+        run: |
+          PYTHONPATH=. python -m trace.eval.run_eval
+
+      - name: Archive Evaluation Reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: trace-evaluation-report
+          path: |
+            report/evaluation_report.md
+            report/evaluation_results.json
+            report/evaluation_summary.csv
+          if-no-files-found: warn

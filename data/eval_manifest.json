@@ -1,0 +1,259 @@
+{
+  "dataset_version": "2.0.0-real-cv",
+  "description": "TRACE Ground-Truth Real Video Evaluation Suite (Zero Label Leakage)",
+  "clips": [
+    {
+      "clip_id": "clip_stable",
+      "description": "Stable branch scene under normal operation with static assets.",
+      "fps": 5.0,
+      "duration_s": 6.0,
+      "events": [
+        {
+          "event_type": "STABLE",
+          "asset_id": "safe-02",
+          "start_s": 0.0,
+          "end_s": 6.0,
+          "must_alert": false,
+          "expected_state": "SAFE",
+          "notes": ""
+        },
+        {
+          "event_type": "STABLE",
+          "asset_id": "printer-01",
+          "start_s": 0.0,
+          "end_s": 6.0,
+          "must_alert": false,
+          "expected_state": "SAFE",
+          "notes": ""
+        },
+        {
+          "event_type": "STABLE",
+          "asset_id": "laptop-03",
+          "start_s": 0.0,
+          "end_s": 6.0,
+          "must_alert": false,
+          "expected_state": "SAFE",
+          "notes": ""
+        }
+      ],
+      "camera_id": "cam-1",
+      "meta": {}
+    },
+    {
+      "clip_id": "clip_move",
+      "description": "Cash Safe physically moved 70px beyond configured threshold at t=1.5s.",
+      "fps": 5.0,
+      "duration_s": 6.0,
+      "events": [
+        {
+          "event_type": "MOVED",
+          "asset_id": "safe-02",
+          "start_s": 1.5,
+          "end_s": 6.0,
+          "must_alert": true,
+          "expected_state": "MOVED",
+          "notes": ""
+        },
+        {
+          "event_type": "STABLE",
+          "asset_id": "printer-01",
+          "start_s": 0.0,
+          "end_s": 6.0,
+          "must_alert": false,
+          "expected_state": "SAFE",
+          "notes": ""
+        }
+      ],
+      "camera_id": "cam-1",
+      "meta": {}
+    },
+    {
+      "clip_id": "clip_missing",
+      "description": "Laser printer removed at t=1.0s, leaving bare desk surface.",
+      "fps": 5.0,
+      "duration_s": 18.0,
+      "events": [
+        {
+          "event_type": "MISSING",
+          "asset_id": "printer-01",
+          "start_s": 1.0,
+          "end_s": 18.0,
+          "must_alert": true,
+          "expected_state": "MISSING",
+          "notes": ""
+        },
+        {
+          "event_type": "STABLE",
+          "asset_id": "safe-02",
+          "start_s": 0.0,
+          "end_s": 18.0,
+          "must_alert": false,
+          "expected_state": "SAFE",
+          "notes": ""
+        }
+      ],
+      "camera_id": "cam-1",
+      "meta": {}
+    },
+    {
+      "clip_id": "clip_occlusion",
+      "description": "Person stands in front of safe from t=1.6s to t=4.8s, then departs.",
+      "fps": 5.0,
+      "duration_s": 8.0,
+      "events": [
+        {
+          "event_type": "OCCLUDED",
+          "asset_id": "safe-02",
+          "start_s": 1.6,
+          "end_s": 4.8,
+          "must_alert": false,
+          "expected_state": "OCCLUDED",
+          "notes": ""
+        },
+        {
+          "event_type": "STABLE",
+          "asset_id": "safe-02",
+          "start_s": 5.8,
+          "end_s": 8.0,
+          "must_alert": false,
+          "expected_state": "SAFE",
+          "notes": ""
+        }
+      ],
+      "camera_id": "cam-1",
+      "meta": {}
+    },
+    {
+      "clip_id": "clip_obstruction",
+      "description": "Camera lens covered with an opaque cloth at t=1.5s.",
+      "fps": 5.0,
+      "duration_s": 6.0,
+      "events": [
+        {
+          "event_type": "CAMERA_OBSTRUCTED",
+          "asset_id": "camera",
+          "start_s": 1.5,
+          "end_s": 6.0,
+          "must_alert": true,
+          "expected_state": "CAMERA_OBSTRUCTED",
+          "notes": ""
+        }
+      ],
+      "camera_id": "cam-1",
+      "meta": {}
+    },
+    {
+      "clip_id": "clip_offline_freeze",
+      "description": "Video capture freezes at t=1.4s.",
+      "fps": 5.0,
+      "duration_s": 6.0,
+      "events": [
+        {
+          "event_type": "CAMERA_OFFLINE",
+          "asset_id": "camera",
+          "start_s": 3.4,
+          "end_s": 6.0,
+          "must_alert": true,
+          "expected_state": "SYSTEM_OFFLINE",
+          "notes": ""
+        }
+      ],
+      "camera_id": "cam-1",
+      "meta": {}
+    },
+    {
+      "clip_id": "clip_camera_shift",
+      "description": "Camera physically knocked 57px displacement at t=1.4s.",
+      "fps": 5.0,
+      "duration_s": 6.0,
+      "events": [
+        {
+          "event_type": "CAMERA_TAMPERED",
+          "asset_id": "camera",
+          "start_s": 1.4,
+          "end_s": 6.0,
+          "must_alert": true,
+          "expected_state": "CAMERA_OBSTRUCTED",
+          "notes": ""
+        }
+      ],
+      "camera_id": "cam-1",
+      "meta": {}
+    },
+    {
+      "clip_id": "clip_lighting_drop",
+      "description": "Ambient lighting drops 60% at t=1.5s with all assets remaining stable.",
+      "fps": 5.0,
+      "duration_s": 6.0,
+      "events": [
+        {
+          "event_type": "LIGHTING_CHANGE",
+          "asset_id": "safe-02",
+          "start_s": 1.5,
+          "end_s": 6.0,
+          "must_alert": false,
+          "expected_state": "SAFE",
+          "notes": ""
+        },
+        {
+          "event_type": "LIGHTING_CHANGE",
+          "asset_id": "printer-01",
+          "start_s": 1.5,
+          "end_s": 6.0,
+          "must_alert": false,
+          "expected_state": "SAFE",
+          "notes": ""
+        }
+      ],
+      "camera_id": "cam-1",
+      "meta": {}
+    },
+    {
+      "clip_id": "clip_swap_lookalike",
+      "description": "Laptop replaced with lookalike decoy at t=1.2s.",
+      "fps": 5.0,
+      "duration_s": 13.0,
+      "events": [
+        {
+          "event_type": "SWAPPED",
+          "asset_id": "laptop-03",
+          "start_s": 1.2,
+          "end_s": 13.0,
+          "must_alert": true,
+          "expected_state": "SWAPPED",
+          "notes": ""
+        }
+      ],
+      "camera_id": "cam-1",
+      "meta": {}
+    },
+    {
+      "clip_id": "clip_recovery",
+      "description": "Safe moved at t=1.2s and restored to baseline location at t=3.5s.",
+      "fps": 5.0,
+      "duration_s": 8.0,
+      "events": [
+        {
+          "event_type": "MOVED",
+          "asset_id": "safe-02",
+          "start_s": 1.2,
+          "end_s": 3.5,
+          "must_alert": true,
+          "expected_state": "MOVED",
+          "notes": ""
+        },
+        {
+          "event_type": "STABLE",
+          "asset_id": "safe-02",
+          "start_s": 5.5,
+          "end_s": 8.0,
+          "must_alert": false,
+          "expected_state": "SAFE",
+          "notes": ""
+        }
+      ],
+      "camera_id": "cam-1",
+      "meta": {}
+    }
+  ]
+}

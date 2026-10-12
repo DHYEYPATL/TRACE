@@ -55,6 +55,58 @@ class ActionRequest(BaseModel):
     note: str = ""
 
 
+def get_auth_role(request: Request, pipeline: TracePipeline) -> str:
+    """Extracts and validates credentials from Authorization header or X-API-Key."""
+    auth_header = request.headers.get("Authorization")
+    api_key_header = request.headers.get("X-API-Key")
+    query_token = request.query_params.get("token")
+
+    token = None
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header[7:].strip()
+    elif api_key_header:
+        token = api_key_header.strip()
+    elif query_token:
+        token = query_token.strip()
+
+    sec = pipeline.cfg.security
+    if token:
+        if token == sec.admin_token:
+            return "admin"
+        elif token == sec.operator_token:
+            return "operator"
+        elif token == sec.viewer_token:
+            return "viewer"
+        else:
+            raise HTTPException(status_code=401, detail="Invalid authentication token")
+
+    if sec.require_auth:
+        raise HTTPException(status_code=401, detail="Authentication required: missing token")
+
+    return "admin"
+
+
+def check_permission(request: Request, pipeline: TracePipeline, min_role: str = "viewer") -> str:
+    """Enforces role-based access control (viewer < operator < admin)."""
+    role = get_auth_role(request, pipeline)
+    hierarchy = {"viewer": 1, "operator": 2, "admin": 3}
+    if hierarchy.get(role, 0) < hierarchy.get(min_role, 1):
+        raise HTTPException(status_code=403, detail=f"Forbidden: requires '{min_role}' role (current: '{role}')")
+    return role
+
+
+def validate_polygon_region(region: List[List[int]], max_w: int = 1920, max_h: int = 1080) -> None:
+    """Validates polygon geometry and bounds."""
+    if not region or len(region) < 3:
+        raise HTTPException(status_code=400, detail="Polygon must have at least 3 vertices")
+    for pt in region:
+        if len(pt) != 2:
+            raise HTTPException(status_code=400, detail="Each vertex must be a 2D [x, y] coordinate")
+        x, y = pt
+        if not (0 <= x <= max_w and 0 <= y <= max_h):
+            raise HTTPException(status_code=400, detail=f"Vertex [{x}, {y}] exceeds valid camera frame boundaries")
+
+
 def create_app(pipeline: TracePipeline) -> FastAPI:
     app = FastAPI(
         title="TRACE - Asset Confidence Engine",
@@ -89,7 +141,12 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
 
     # 1. Asset Registration & Management
     @app.post("/api/assets")
-    def register_asset(req: RegisterAssetRequest):
+    def register_asset(req: RegisterAssetRequest, request: Request):
+        check_permission(request, pipeline, min_role="admin")
+        validate_polygon_region(req.region)
+        if req.zone:
+            validate_polygon_region(req.zone)
+
         zone_pts = req.zone or req.region
         asset_cfg = AssetConfig(
             id=req.id,
@@ -126,8 +183,9 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
         return {"ok": True, "asset": dict(row)}
 
     @app.post("/api/assets/{asset_id}/baseline/accept")
-    def accept_new_baseline(asset_id: str):
+    def accept_new_baseline(asset_id: str, request: Request):
         """Accepts current camera crop as the new official baseline location (e.g. after authorized move)."""
+        check_permission(request, pipeline, min_role="operator")
         if asset_id not in pipeline.assets:
             raise HTTPException(status_code=404, detail="Asset not found")
 
@@ -153,8 +211,10 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
         return {"ok": True, "asset_id": asset_id, "message": "New baseline accepted."}
 
     @app.post("/api/assets/{asset_id}/baseline")
-    def capture_baseline(asset_id: str, kind: str = "median"):
+    def capture_baseline(asset_id: str, kind: str = "median", request: Request = None):
         """Captures a baseline crop of the asset (kind: 'median', 'empty', or 'variant')."""
+        if request:
+            check_permission(request, pipeline, min_role="operator")
         if asset_id not in pipeline.assets:
             raise HTTPException(status_code=404, detail="Asset not found")
 
@@ -177,13 +237,16 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
         return {"ok": True, "asset_id": asset_id, "kind": kind, "message": f"{kind.capitalize()} baseline captured."}
 
     @app.post("/api/assets/{asset_id}/authorize")
-    def authorize_move(asset_id: str, req: AuthorizeMoveRequest):
+    def authorize_move(asset_id: str, req: AuthorizeMoveRequest, request: Request = None):
+        if request:
+            check_permission(request, pipeline, min_role="operator")
         res = pipeline.policy_engine.authorize_move(
             asset_id=asset_id,
             duration_minutes=req.duration_minutes,
             actor=req.actor
         )
         return res
+
 
     # Review Queue (Selective Prediction, Section 3.3 #5 & 8.5)
     @app.get("/api/review-queue")
@@ -195,8 +258,10 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
         return {"ok": True, "count": len(rows), "items": rows}
 
     @app.post("/api/review-queue/{event_id}/confirm")
-    def confirm_review_event(event_id: str, req: ActionRequest):
+    def confirm_review_event(event_id: str, req: ActionRequest, request: Request = None):
         """Promotes review event to an active security alert and dispatches notification."""
+        if request:
+            check_permission(request, pipeline, min_role="operator")
         with pipeline.db_mgr.get_connection() as conn:
             cur = conn.execute("SELECT payload_json FROM events WHERE id = ?", (event_id,))
             row = cur.fetchone()
@@ -212,8 +277,10 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
         return {"ok": True, "event_id": event_id, "status": "CONFIRMED"}
 
     @app.post("/api/review-queue/{event_id}/dismiss")
-    def dismiss_review_event(event_id: str, req: ActionRequest):
+    def dismiss_review_event(event_id: str, req: ActionRequest, request: Request = None):
         """Dismisses review event, recording a hard negative for model calibration."""
+        if request:
+            check_permission(request, pipeline, min_role="operator")
         with pipeline.db_mgr.get_connection() as conn:
             conn.execute("UPDATE events SET status = 'DISMISSED' WHERE id = ?", (event_id,))
             conn.commit()
@@ -231,8 +298,9 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
         }
 
     @app.post("/api/settings")
-    def update_settings(payload: Dict[str, Any]):
+    def update_settings(payload: Dict[str, Any], request: Request):
         """Dynamically tunes timers, business hours, and thresholds without restarting."""
+        check_permission(request, pipeline, min_role="admin")
         if "timers" in payload:
             t = pipeline.cfg.get_timers()
             for k, v in payload["timers"].items():
@@ -343,7 +411,9 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
         return {"ok": True, "event": ev_dict}
 
     @app.post("/api/events/{event_id}/{action_name}")
-    def handle_event_action(event_id: str, action_name: str, req: ActionRequest):
+    def handle_event_action(event_id: str, action_name: str, req: ActionRequest, request: Request = None):
+        if request:
+            check_permission(request, pipeline, min_role="operator")
         if action_name not in ("ack", "resolve", "false_positive"):
             raise HTTPException(status_code=400, detail="Invalid action")
 
@@ -399,6 +469,7 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
     # 5. System Health & Observability
     @app.get("/api/health")
     def get_system_health():
+        meta = pipeline.verifier.get_model_metadata()
         return {
             "status": "healthy" if not pipeline.health_monitor.is_obstructed else "degraded",
             "camera_obstructed": pipeline.health_monitor.is_obstructed,
@@ -407,7 +478,8 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
             "queue_depth": pipeline.outbox.get_pending_count(),
             "network_connected": pipeline.outbox.network_connected,
             "total_frames_processed": pipeline.total_frames_processed,
-            "model_version": "TRACE-DINOv2-SIFT-v1",
+            "model_version": meta["model_version"],
+            "model_metadata": meta,
         }
 
     @app.get("/metrics")
@@ -422,7 +494,14 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
 
     # 6. Demo Scenario Fault Injector
     @app.post("/api/demo/inject")
-    def inject_demo_fault(req: InjectFaultRequest):
+    def inject_demo_fault(req: InjectFaultRequest, request: Request):
+        if not pipeline.cfg.security.demo_mode:
+            raise HTTPException(
+                status_code=403,
+                detail="Demo fault injection is disabled. Set security.demo_mode=true in config to enable."
+            )
+        check_permission(request, pipeline, min_role="admin")
+
         if req.fault_type == "reset":
             return pipeline.demo_injector.reset_all()
 
