@@ -347,12 +347,16 @@ def run_full_evaluation(out_dir: str = "report") -> Dict[str, Any]:
     tn_light = cat_stats.get("LIGHTING_CHANGE", {}).get("tn", 0)
     fp_light = cat_stats.get("LIGHTING_CHANGE", {}).get("fp", 0)
 
-    report_md = f"""# TRACE Multi-Scenario Regression Benchmark Report
+    report_md = f"""# TRACE Synthetic Multi-Scenario Regression Benchmark Report
 
-**Evaluation Suite:** Synthetic Multi-Scenario Regression Suite (synthetic_regression_v1, 10 Controlled Scenarios, 415 Frames)  
+> **DISCLOSURE — SYNTHETIC BENCHMARK ONLY**:  
+> This benchmark evaluates algorithmic logic against a generated synthetic frame dataset (`synthetic_regression_v1`, 10 controlled scenarios, 415 frames).  
+> It exercises `FullTraceEvaluator` to measure state transitions, baseline differences, and event matching against synthetic ground truth.  
+> **This does NOT constitute physical webcam or real-world physical camera validation.** Physical camera testing is validated separately via live hardware rehearsal and pipeline integration tests.
+
+**Evaluation Suite:** Synthetic Multi-Scenario Regression Suite (synthetic_regression_v1)  
 **Date:** {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}  
 **Matching Protocol:** Strict 1-to-1 Type-Compatible Event Matching (Zero Ground-Truth Leakage)  
-**Disclosure:** This benchmark measures algorithmic behavior under controlled scenarios simulating physical phenomena (displacement, removal, swap, occlusion, optical obstruction, freeze, knock, and lighting variation). Physical camera validation requires continuous real-world recordings.
 
 ---
 

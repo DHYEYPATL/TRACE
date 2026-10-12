@@ -225,6 +225,58 @@ class DatabaseManager:
     def init_db(self) -> None:
         with self.get_connection() as conn:
             conn.executescript(SCHEMA_SQL)
+
+            # Migration: Ensure incidents and events allow NULL asset_id (camera faults & foreign objects)
+            cur = conn.execute("PRAGMA table_info(incidents)")
+            for col in cur.fetchall():
+                if col[1] == "asset_id" and col[3] == 1:
+                    conn.execute("PRAGMA foreign_keys = OFF;")
+                    conn.execute("""
+                        CREATE TABLE incidents_migrated (
+                            id TEXT PRIMARY KEY,
+                            asset_id TEXT,
+                            opened_at REAL NOT NULL,
+                            closed_at REAL,
+                            status TEXT NOT NULL DEFAULT 'OPEN',
+                            counter INTEGER NOT NULL DEFAULT 1,
+                            FOREIGN KEY (asset_id) REFERENCES assets (id)
+                        );
+                    """)
+                    conn.execute("INSERT INTO incidents_migrated SELECT id, asset_id, opened_at, closed_at, status, counter FROM incidents;")
+                    conn.execute("DROP TABLE incidents;")
+                    conn.execute("ALTER TABLE incidents_migrated RENAME TO incidents;")
+                    conn.execute("PRAGMA foreign_keys = ON;")
+                    break
+
+            cur = conn.execute("PRAGMA table_info(events)")
+            for col in cur.fetchall():
+                if col[1] == "asset_id" and col[3] == 1:
+                    conn.execute("PRAGMA foreign_keys = OFF;")
+                    conn.execute("""
+                        CREATE TABLE events_migrated (
+                            id TEXT PRIMARY KEY,
+                            asset_id TEXT,
+                            camera_id TEXT NOT NULL,
+                            type TEXT NOT NULL,
+                            severity TEXT NOT NULL,
+                            confidence REAL NOT NULL,
+                            status TEXT NOT NULL DEFAULT 'NEW',
+                            detected_at REAL NOT NULL,
+                            received_at REAL NOT NULL,
+                            before_path TEXT,
+                            after_path TEXT,
+                            payload_json TEXT,
+                            incident_id TEXT,
+                            FOREIGN KEY (asset_id) REFERENCES assets (id),
+                            FOREIGN KEY (incident_id) REFERENCES incidents (id)
+                        );
+                    """)
+                    conn.execute("INSERT INTO events_migrated SELECT id, asset_id, camera_id, type, severity, confidence, status, detected_at, received_at, before_path, after_path, payload_json, incident_id FROM events;")
+                    conn.execute("DROP TABLE events;")
+                    conn.execute("ALTER TABLE events_migrated RENAME TO events;")
+                    conn.execute("PRAGMA foreign_keys = ON;")
+                    break
+
             # Seed default admin user if not exists
             cur = conn.execute("SELECT COUNT(*) FROM users")
             if cur.fetchone()[0] == 0:

@@ -157,6 +157,43 @@ class RegionVerifier:
             gray_empty = cv2.cvtColor(empty_roi_bgr, cv2.COLOR_BGR2GRAY)
             empty_match = compute_ssim_grayscale(gray_live, gray_empty)
 
+        # 6. Spatial tile consistency check for partial obstruction detection
+        is_partially_occluded = False
+        occlusion_ratio = 0.0
+        if baseline_median_crop is not None and baseline_median_crop.size > 0:
+            h_b, w_b = baseline_median_crop.shape[:2]
+            h_l, w_l = live_crop_bgr.shape[:2]
+            if h_b >= 16 and w_b >= 16:
+                sample_live = live_crop_bgr if (h_b == h_l and w_b == w_l) else cv2.resize(live_crop_bgr, (w_b, h_b))
+                gray_l = cv2.cvtColor(sample_live, cv2.COLOR_BGR2GRAY)
+                gray_b = cv2.cvtColor(baseline_median_crop, cv2.COLOR_BGR2GRAY)
+
+                grid_r, grid_c = 3, 3
+                th, tw = h_b // grid_r, w_b // grid_c
+                matching_tiles = 0
+                differing_tiles = 0
+                total_tiles = grid_r * grid_c
+
+                for r in range(grid_r):
+                    for c in range(grid_c):
+                        t_l = gray_l[r*th:(r+1)*th, c*tw:(c+1)*tw]
+                        t_b = gray_b[r*th:(r+1)*th, c*tw:(c+1)*tw]
+                        if t_l.size == 0 or t_b.size == 0:
+                            continue
+                        tile_ssim = compute_ssim_grayscale(t_l, t_b)
+                        if tile_ssim >= 0.70:
+                            matching_tiles += 1
+                        elif tile_ssim < 0.45:
+                            differing_tiles += 1
+
+                # Partial occlusion: some parts of the asset match baseline, while other parts are obscured
+                if (matching_tiles >= 2 and differing_tiles >= 2) or (inliers >= 3 and fused_score < 0.65):
+                    is_partially_occluded = True
+                elif tag_id is not None and tag_status == "UNREADABLE" and differing_tiles >= 1 and (fused_score >= 0.35 or inliers >= 2):
+                    is_partially_occluded = True
+
+                occlusion_ratio = float(differing_tiles / total_tiles) if is_partially_occluded else 0.0
+
         return {
             "present_score": round(float(fused_score), 4),
             "s_emb": round(float(s_emb), 4),
@@ -166,6 +203,8 @@ class RegionVerifier:
             "tag_matched": tag_matched,
             "tag_status": tag_status,
             "detected_tag_id": actual_detected_tag,
+            "is_partially_occluded": is_partially_occluded,
+            "occlusion_ratio": round(float(occlusion_ratio), 4),
         }
 
     @staticmethod
@@ -191,3 +230,23 @@ class RegionVerifier:
         drift_frac = drift_px / diag
 
         return drift_px, drift_frac
+
+
+def detect_primary_tag(crop_bgr: np.ndarray, detector: Optional[Any] = None) -> Optional[int]:
+    """Detects primary ArUco tag ID in a crop, or None."""
+    if crop_bgr is None or crop_bgr.size == 0:
+        return None
+    if detector is None:
+        try:
+            aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
+            aruco_params = cv2.aruco.DetectorParameters()
+            detector = cv2.aruco.ArucoDetector(aruco_dict, aruco_params)
+        except Exception:
+            return None
+    try:
+        corners, ids, _ = detector.detectMarkers(crop_bgr)
+        if ids is not None and len(ids) > 0:
+            return int(ids[0][0])
+    except Exception:
+        pass
+    return None

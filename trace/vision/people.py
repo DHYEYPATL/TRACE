@@ -44,11 +44,26 @@ class PeopleSegmenter:
             curr_mask = cv2.bitwise_or(curr_mask, extra_mask)
 
         # 2. Fast CPU pedestrian detection (downscaled for speed)
+        rects = []
         scale = 0.5
-        small = cv2.resize(frame_bgr, (int(w * scale), int(h * scale)))
-        rects, _ = self.hog.detectMultiScale(
-            small, winStride=(8, 8), padding=(8, 8), scale=1.05
-        )
+        target_w = int(w * scale)
+        target_h = int(h * scale)
+
+        # OpenCV default HOG detector has fixed window size 64x128.
+        # Passing an image smaller than this causes memory corruption / crash in 32-bit OpenCV.
+        try:
+            if target_w >= 64 and target_h >= 128:
+                small = cv2.resize(frame_bgr, (target_w, target_h))
+                rects, _ = self.hog.detectMultiScale(
+                    small, winStride=(8, 8), padding=(8, 8), scale=1.05
+                )
+            elif w >= 64 and h >= 128:
+                rects, _ = self.hog.detectMultiScale(
+                    frame_bgr, winStride=(8, 8), padding=(8, 8), scale=1.05
+                )
+                scale = 1.0
+        except Exception:
+            rects = []
 
         for rx, ry, rw, rh in rects:
             # Scale coordinates back up
@@ -63,6 +78,10 @@ class PeopleSegmenter:
 
         # 3. Dilate mask by 15px
         dilated = cv2.dilate(curr_mask, self.kernel)
+        
+        # Filter history to keep only masks matching current dimensions
+        valid_history = [m for m in self.history if m.shape == (h, w)]
+        self.history = collections.deque(valid_history, maxlen=self.history.maxlen)
         self.history.append(dilated)
 
         # 4. Temporal OR across the last 3 frames (Section 5.4)

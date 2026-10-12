@@ -22,7 +22,7 @@ class DemoFaultInjector:
             "dim_lights": {"active": False, "until": 0.0},
             "occlude_asset": {"active": False, "asset_id": None, "until": 0.0},
             "cut_network": {"active": False},
-            "move_asset": {"active": False, "asset_id": None, "dx": 60, "dy": 40},
+            "move_asset": {"active": False, "asset_id": None, "dx": 260, "dy": 80},
             "remove_asset": {"active": False, "asset_id": None},
             "place_unknown_object": {"active": False},
             "swap_asset": {"active": False, "asset_id": None},

@@ -25,19 +25,13 @@ class AlertRouter:
     def register_ws_callback(self, cb: Callable[[Dict[str, Any]], None]) -> None:
         self.websocket_subscribers.append(cb)
 
-    def dispatch(self, event: Dict[str, Any]) -> None:
-        """
-        Dispatches an event asynchronously to prevent blocking the vision loop.
-        """
-        threading.Thread(target=self._dispatch_sync, args=(event,), daemon=True).start()
-
-    def _dispatch_sync(self, event: Dict[str, Any]) -> None:
+    def broadcast_ws(self, event: Dict[str, Any]) -> None:
+        """Broadcasts alert locally to connected WebSocket subscribers."""
         severity = event.get("severity", "medium").lower()
         ev_type = event.get("type", "UNKNOWN")
         asset_id = event.get("asset_id", "Unknown Asset")
         conf = event.get("confidence", 0.0)
 
-        # 1. Local WebSocket broadcast (always)
         msg = {
             "kind": "alert",
             "event": event,
@@ -49,15 +43,39 @@ class AlertRouter:
             except Exception as e:
                 logger.warning(f"Error in websocket alert callback: {e}")
 
-        # 2. External channels for medium and high severity
-        if severity in ("medium", "high"):
-            self._send_telegram(event)
-            self._send_ntfy(event)
+    def send_external(self, event: Dict[str, Any]) -> bool:
+        """
+        Delivers notification to external channels (Telegram, ntfy).
+        Returns True if and only if at least one external channel is configured AND all configured channels succeeded.
+        Never reports True if no external channel is configured or if delivery fails.
+        """
+        severity = event.get("severity", "medium").lower()
+        if severity not in ("medium", "high"):
+            return False
 
-    def _send_telegram(self, event: Dict[str, Any]) -> None:
+        has_telegram = bool(self.cfg.telegram.enabled and self.cfg.telegram.bot_token and self.cfg.telegram.chat_id)
+        has_ntfy = bool(self.cfg.ntfy.enabled and self.cfg.ntfy.topic)
+
+        if not has_telegram and not has_ntfy:
+            logger.debug("No external notification channels (Telegram, ntfy) configured.")
+            return False
+
+        tg_ok = self._send_telegram(event) if has_telegram else True
+        ntfy_ok = self._send_ntfy(event) if has_ntfy else True
+        return tg_ok and ntfy_ok
+
+    def dispatch(self, event: Dict[str, Any]) -> bool:
+        """
+        Dispatches both local websocket broadcast and external channels.
+        Returns True if external delivery succeeded.
+        """
+        self.broadcast_ws(event)
+        return self.send_external(event)
+
+    def _send_telegram(self, event: Dict[str, Any]) -> bool:
         tg_cfg = self.cfg.telegram
         if not tg_cfg.enabled or not tg_cfg.bot_token or not tg_cfg.chat_id:
-            return
+            return False
 
         ev_type = event.get("type")
         asset_id = event.get("asset_id")
@@ -81,14 +99,19 @@ class AlertRouter:
             "parse_mode": "Markdown"
         }
         try:
-            requests.post(url, json=payload, timeout=4.0)
+            resp = requests.post(url, json=payload, timeout=4.0)
+            if resp.status_code >= 400:
+                logger.error(f"Failed to deliver Telegram alert: HTTP {resp.status_code}")
+                return False
+            return True
         except Exception as e:
             logger.error(f"Failed to deliver Telegram alert: {e}")
+            return False
 
-    def _send_ntfy(self, event: Dict[str, Any]) -> None:
+    def _send_ntfy(self, event: Dict[str, Any]) -> bool:
         ntfy_cfg = self.cfg.ntfy
         if not ntfy_cfg.enabled or not ntfy_cfg.topic:
-            return
+            return False
 
         sev = event.get("severity", "medium").lower()
         prio = 5 if sev == "high" else 3
@@ -98,7 +121,7 @@ class AlertRouter:
         msg = f"Severity: {sev.upper()} | Confidence: {event.get('confidence', 0.0):.2f}"
 
         try:
-            requests.post(
+            resp = requests.post(
                 url,
                 data=msg.encode("utf-8"),
                 headers={
@@ -108,5 +131,10 @@ class AlertRouter:
                 },
                 timeout=4.0
             )
+            if resp.status_code >= 400:
+                logger.error(f"Failed to deliver ntfy alert: HTTP {resp.status_code}")
+                return False
+            return True
         except Exception as e:
             logger.error(f"Failed to deliver ntfy alert: {e}")
+            return False

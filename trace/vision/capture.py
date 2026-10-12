@@ -114,6 +114,19 @@ def generate_synthetic_branch_frame(frame_idx: int, width: int = 1280, height: i
         tag3 = cv2.aruco.generateImageMarker(aruco_dict, 3, 60)
         tag3_bgr = cv2.cvtColor(tag3, cv2.COLOR_GRAY2BGR)
         frame[40:100, width // 2 - 30 : width // 2 + 30] = tag3_bgr
+
+        # Asset tags for demo assets:
+        # Tag 12 for safe-02 (Region: [180, 220] to [380, 520])
+        tag12 = cv2.aruco.generateImageMarker(aruco_dict, 12, 45)
+        frame[450:495, 200:245] = cv2.cvtColor(tag12, cv2.COLOR_GRAY2BGR)
+
+        # Tag 24 for printer-01 (Region: [520, 260] to [740, 480])
+        tag24 = cv2.aruco.generateImageMarker(aruco_dict, 24, 45)
+        frame[420:465, 530:575] = cv2.cvtColor(tag24, cv2.COLOR_GRAY2BGR)
+
+        # Tag 31 for laptop-03 (Region: [880, 310] to [1100, 500])
+        tag31 = cv2.aruco.generateImageMarker(aruco_dict, 31, 40)
+        frame[440:480, 890:930] = cv2.cvtColor(tag31, cv2.COLOR_GRAY2BGR)
     except Exception:
         # Fallback high-contrast geometric landmarks
         cv2.rectangle(frame, (80, 40), (140, 100), (0, 0, 0), -1)
@@ -161,19 +174,28 @@ class FrameCapture:
         self._lock = threading.RLock()
         self._thread: Optional[threading.Thread] = None
 
-    def start(self) -> None:
-        if self.is_running:
-            return
+        self._reconnect_delay: float = 1.0
+        self._min_reconnect_delay: float = 1.0
+        self._max_reconnect_delay: float = 10.0
+        self._last_reconnect_attempt_mono: float = 0.0
 
-        if not self.is_synthetic:
-            # Parse webcam:N or file:... or rtsp://...
+    def _try_open_camera(self) -> bool:
+        """Attempts to open the configured camera source. Returns True if successfully opened."""
+        if self.is_synthetic:
+            self.is_connected = True
+            return True
+
+        if self.cap is not None:
+            try:
+                self.cap.release()
+            except Exception:
+                pass
+            self.cap = None
+
+        try:
             if self.source_uri.startswith("webcam:"):
-                try:
-                    dev_idx = int(self.source_uri.split(":")[1])
-                    self.cap = cv2.VideoCapture(dev_idx, cv2.CAP_DSHOW)
-                except Exception as e:
-                    logger.error(f"Invalid webcam index in '{self.source_uri}': {e}")
-                    self.cap = None
+                dev_idx = int(self.source_uri.split(":")[1])
+                self.cap = cv2.VideoCapture(dev_idx, cv2.CAP_DSHOW)
             elif self.source_uri.startswith("file:"):
                 file_path = self.source_uri.replace("file:", "")
                 self.cap = cv2.VideoCapture(file_path)
@@ -184,15 +206,49 @@ class FrameCapture:
                 self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
                 self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
                 self.is_connected = True
-                logger.info(f"Connected to genuine camera source: {self.source_uri}")
+                self._reconnect_delay = self._min_reconnect_delay
+                logger.info(f"Connected to camera source: {self.source_uri}")
+                return True
             else:
+                if self.cap:
+                    try:
+                        self.cap.release()
+                    except Exception:
+                        pass
+                    self.cap = None
                 self.is_connected = False
-                if not self.allow_synthetic_fallback:
-                    logger.error(f"Camera connection failed for '{self.source_uri}'. Silent synthetic fallback is DISABLED.")
-                    raise RuntimeError(f"Unable to open configured camera feed '{self.source_uri}'. Check connection and permissions.")
-                else:
+                return False
+        except Exception as e:
+            logger.warning(f"Error opening camera source '{self.source_uri}': {e}")
+            if self.cap:
+                try:
+                    self.cap.release()
+                except Exception:
+                    pass
+                self.cap = None
+            self.is_connected = False
+            return False
+
+    def start(self) -> None:
+        if self.is_running:
+            return
+
+        if not self.is_synthetic:
+            opened = self._try_open_camera()
+            if not opened:
+                if self.allow_synthetic_fallback:
                     logger.warning(f"DEMO MODE: Could not open '{self.source_uri}'. Explicitly permitted fallback to synthetic stream.")
                     self.is_synthetic = True
+                    self.is_connected = True
+                else:
+                    logger.warning(
+                        f"Camera feed '{self.source_uri}' could not be opened at startup. "
+                        f"Capture service starting in OFFLINE state with automatic retry backoff."
+                    )
+                    self.is_connected = False
+                    self._last_reconnect_attempt_mono = time.monotonic()
+        else:
+            self.is_connected = True
 
         self.is_running = True
         self._thread = threading.Thread(target=self._capture_loop, daemon=True)
@@ -207,16 +263,34 @@ class FrameCapture:
             if self.is_synthetic:
                 frame = generate_synthetic_branch_frame(self.frame_counter, self.width, self.height)
                 self.is_connected = True
-            elif self.cap and self.cap.isOpened():
+            elif self.is_connected and self.cap and self.cap.isOpened():
                 ret, grabbed = self.cap.read()
                 if ret and grabbed is not None:
                     frame = grabbed
-                    self.is_connected = True
                 else:
+                    logger.warning(f"Camera frame acquisition failed for '{self.source_uri}'. Entering retry backoff loop.")
                     self.is_connected = False
+                    if self.cap:
+                        try:
+                            self.cap.release()
+                        except Exception:
+                            pass
+                        self.cap = None
+                    self._last_reconnect_attempt_mono = time.monotonic()
+                    self._reconnect_delay = self._min_reconnect_delay
                     # For video files, loop playback
                     if self.source_uri.startswith("file:"):
-                        self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        self._try_open_camera()
+            else:
+                # Camera is disconnected: attempt retry with bounded backoff
+                now_mono = time.monotonic()
+                if (now_mono - self._last_reconnect_attempt_mono) >= self._reconnect_delay:
+                    self._last_reconnect_attempt_mono = now_mono
+                    if self._try_open_camera():
+                        logger.info(f"Camera '{self.source_uri}' successfully connected/reconnected.")
+                    else:
+                        # Bounded exponential backoff
+                        self._reconnect_delay = min(self._max_reconnect_delay, self._reconnect_delay * 1.5)
 
             if frame is not None:
                 with self._lock:
@@ -259,7 +333,7 @@ class FrameCapture:
                 return True, self.latest_frame.copy(), self.last_frame_time
 
             # Real camera stream
-            if self.latest_frame is None:
+            if not self.is_connected or self.latest_frame is None:
                 return False, None, 0.0
 
             # Monotonic staleness check: if no frame received for > 2.0s, signal failure
@@ -289,10 +363,10 @@ class FrameCapture:
                     self.last_frame_captured_mono_ns = time.monotonic_ns()
                     self.frame_counter = 1
 
-            if self.latest_frame is None:
+            if not self.is_connected or self.latest_frame is None:
                 return FrameEnvelope(
                     camera_id=camera_id,
-                    frame_id=0,
+                    frame_id=self.frame_counter,
                     captured_at_utc=datetime.datetime.now(datetime.timezone.utc),
                     captured_monotonic_ns=time.monotonic_ns(),
                     image_bgr=None,

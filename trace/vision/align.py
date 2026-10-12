@@ -7,6 +7,7 @@ Separates legitimate camera drift from physical camera tampering (Section 5.3).
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import cv2
 import numpy as np
@@ -19,7 +20,7 @@ class FrameAligner:
     Tracks static environmental landmarks to correct camera drift or detect tampering.
     """
 
-    def __init__(self):
+    def __init__(self, reference_path: str = "data/reference_frame.jpg"):
         # ArUco detector (Dictionary 4X4_50)
         self.aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
         self.aruco_params = cv2.aruco.DetectorParameters()
@@ -29,6 +30,7 @@ class FrameAligner:
         self.orb = cv2.ORB_create(nfeatures=500)
 
         # Reference anchor data
+        self.reference_path: str = reference_path
         self.ref_frame_gray: Optional[np.ndarray] = None
         self.ref_aruco_corners: Dict[int, np.ndarray] = {}
         self.ref_orb_kps: Optional[List[cv2.KeyPoint]] = None
@@ -40,22 +42,58 @@ class FrameAligner:
         self.inlier_ratio: float = 1.0
         self.is_tampered: bool = False
 
-    def register_reference(self, frame_bgr: np.ndarray) -> Dict[str, Any]:
-        """Establishes reference frame and extracts baseline landmarks."""
+    def save_reference(self, path: Optional[str] = None, frame_bgr: Optional[np.ndarray] = None) -> bool:
+        """Persists approved reference frame to disk."""
+        target_path = Path(path or self.reference_path)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        img_to_save = frame_bgr if frame_bgr is not None else self.ref_frame_gray
+        if img_to_save is not None and img_to_save.size > 0:
+            ok = cv2.imwrite(str(target_path), img_to_save)
+            if ok:
+                logger.info(f"Saved approved reference frame to {target_path}")
+            return bool(ok)
+        return False
+
+    def load_reference(self, path: Optional[str] = None) -> bool:
+        """Loads approved reference frame and extracts baseline landmarks without resetting camera state."""
+        target_path = Path(path or self.reference_path)
+        if not target_path.exists():
+            return False
+        img = cv2.imread(str(target_path))
+        if img is None or img.size == 0:
+            return False
+        self.register_reference(img, save_to_disk=False, force=True)
+        logger.info(f"Restored approved reference frame from {target_path}")
+        return True
+
+    def register_reference(self, frame_bgr: np.ndarray, save_to_disk: bool = True, force: bool = False) -> Dict[str, Any]:
+        """Establishes reference frame and extracts baseline landmarks. Does not overwrite if already registered unless forced."""
+        if self.ref_frame_gray is not None and not force:
+            return {
+                "aruco_markers_found": len(self.ref_aruco_corners),
+                "orb_features_found": len(self.ref_orb_kps) if self.ref_orb_kps else 0,
+                "already_registered": True
+            }
+
         gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
         self.ref_frame_gray = gray
 
-        # Detect reference ArUco markers
+        # Detect reference ArUco markers (restricted to wall landmarks IDs 1-3)
         corners, ids, _ = self.aruco_detector.detectMarkers(gray)
         self.ref_aruco_corners.clear()
         if ids is not None:
             for marker_id, c in zip(ids.flatten(), corners):
-                self.ref_aruco_corners[int(marker_id)] = c.reshape(-1, 2)
+                m_id = int(marker_id)
+                if m_id in (1, 2, 3):
+                    self.ref_aruco_corners[m_id] = c.reshape(-1, 2)
 
         # Extract reference ORB features
         kps, des = self.orb.detectAndCompute(gray, None)
         self.ref_orb_kps = kps
         self.ref_orb_des = des
+
+        if save_to_disk:
+            self.save_reference(frame_bgr=frame_bgr)
 
         return {
             "aruco_markers_found": len(self.ref_aruco_corners),
@@ -75,12 +113,12 @@ class FrameAligner:
         src_pts: List[np.ndarray] = []
         dst_pts: List[np.ndarray] = []
 
-        # 1. Match ArUco markers
+        # 1. Match ArUco wall landmarks (strictly IDs 1-3)
         corners, ids, _ = self.aruco_detector.detectMarkers(gray)
         if ids is not None:
             for marker_id, c in zip(ids.flatten(), corners):
                 m_id = int(marker_id)
-                if m_id in self.ref_aruco_corners:
+                if m_id in (1, 2, 3) and m_id in self.ref_aruco_corners:
                     ref_c = self.ref_aruco_corners[m_id]
                     curr_c = c.reshape(-1, 2)
                     for r_pt, cur_pt in zip(ref_c, curr_c):

@@ -28,6 +28,9 @@ class S(str, Enum):
     SYSTEM_OFFLINE = "SYSTEM_OFFLINE"
 
 
+State = S
+
+
 @dataclass
 class FSMConfig:
     move_frac: float = 0.10
@@ -54,6 +57,7 @@ class Obs:
     state_conf: float = 1.0        # State classifier confidence
     tag_matched: bool = True       # ArUco / QR tag identity verification
     tag_status: str = "NONE"       # "MATCH", "MISMATCH", "UNREADABLE", "NONE"
+    is_partially_occluded: bool = False # Partial non-human or human obstruction
 
 
 class AssetFSM:
@@ -108,10 +112,10 @@ class AssetFSM:
     def step(self, o: Obs) -> S:
         c = self.cfg
 
-        # 1. Evaluate visibility & verification
-        visible = o.camera_ok and (o.visibility >= c.vis_floor)
+        # 1. Evaluate visibility & verification (conservative partial occlusion handling)
+        is_occluded = (not o.found_elsewhere) and ((not o.camera_ok) or (o.visibility < c.vis_floor) or o.is_partially_occluded)
+        visible = o.camera_ok and not is_occluded
         verified = visible and (o.present_score >= c.present) and o.tag_matched
-        is_occluded = o.camera_ok and (o.visibility < c.vis_floor)
 
         # 2. Step the Doubt Engine
         self.doubt_engine.step(

@@ -26,6 +26,8 @@ data/*.db-shm
 data/*.db-wal
 data/*.log
 data/signing_key.hex
+data/reference_frame.jpg
+data/reference_*.jpg
 data/evidence/*
 !data/evidence/.gitkeep
 data/recordings/*

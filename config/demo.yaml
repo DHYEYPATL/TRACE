@@ -111,3 +111,7 @@ ledger:
 privacy:
   mask_people: true
   retention_days: 30
+
+security:
+  demo_mode: true
+  require_auth: false

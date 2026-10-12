@@ -13,6 +13,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 import cv2
+import numpy as np
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -20,7 +21,7 @@ from pydantic import BaseModel, Field
 
 from trace.api.websocket import ConnectionManager
 from trace.config import AssetConfig
-from trace.pipeline import TracePipeline
+from trace.pipeline import TracePipeline, validate_region_bounds
 
 logger = logging.getLogger("trace.api")
 
@@ -197,6 +198,17 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
         if req.zone:
             validate_polygon_region(req.zone)
 
+        # Validate region against configured or active camera frame bounds
+        cam_w = pipeline.capture.width if pipeline.capture else 1280
+        cam_h = pipeline.capture.height if pipeline.capture else 720
+        valid_r, err_r = validate_region_bounds(req.region, (cam_h, cam_w))
+        if not valid_r:
+            raise HTTPException(status_code=400, detail=f"Invalid region bounds: {err_r}")
+        if req.zone:
+            valid_z, err_z = validate_region_bounds(req.zone, (cam_h, cam_w))
+            if not valid_z:
+                raise HTTPException(status_code=400, detail=f"Invalid zone bounds: {err_z}")
+
         zone_pts = req.zone or req.region
         asset_cfg = AssetConfig(
             id=req.id,
@@ -271,9 +283,36 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
                 raise HTTPException(status_code=404, detail="Asset not found")
         return {"ok": True, "asset": dict(row)}
 
+    @app.get("/api/baselines")
+    def list_all_baselines(request: Request):
+        check_permission(request, pipeline, min_role="viewer")
+        with pipeline.db_mgr.get_connection() as conn:
+            cur = conn.execute("SELECT id, asset_id, kind, image_path, created_at FROM baselines ORDER BY created_at DESC")
+            rows = [dict(r) for r in cur.fetchall()]
+        return {"ok": True, "baselines": rows}
+
+    @app.get("/api/assets/{asset_id}/baselines")
+    def get_asset_baselines(asset_id: str, request: Request):
+        check_permission(request, pipeline, min_role="viewer")
+        if asset_id not in pipeline.assets:
+            raise HTTPException(status_code=404, detail="Asset not found")
+        with pipeline.db_mgr.get_connection() as conn:
+            cur = conn.execute(
+                "SELECT id, asset_id, kind, image_path, created_at FROM baselines WHERE asset_id = ? ORDER BY created_at DESC",
+                (asset_id,)
+            )
+            rows = [dict(r) for r in cur.fetchall()]
+        return {
+            "ok": True,
+            "asset_id": asset_id,
+            "baselines": rows,
+            "has_median": asset_id in pipeline.baseline_medians and pipeline.baseline_medians[asset_id] is not None,
+            "has_empty": asset_id in pipeline.empty_rois and pipeline.empty_rois[asset_id] is not None,
+        }
+
     @app.post("/api/assets/{asset_id}/baseline/accept")
     def accept_new_baseline(asset_id: str, request: Request):
-        """Accepts current camera crop as the new official baseline location (e.g. after authorized move)."""
+        """Accepts current camera crop as the new official baseline location in canonical coordinates."""
         check_permission(request, pipeline, min_role="operator")
         if asset_id not in pipeline.assets:
             raise HTTPException(status_code=404, detail="Asset not found")
@@ -284,9 +323,19 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
             raise HTTPException(status_code=500, detail="No active camera frame")
 
         a = pipeline.assets[asset_id]
+        canonical_frame = pipeline.aligner.warp_to_reference(frame)
+        h, w = canonical_frame.shape[:2]
+
+        valid, err = validate_region_bounds(a.region, (h, w))
+        if not valid:
+            raise HTTPException(status_code=400, detail=f"Region out of frame bounds: {err}")
+
         pts = np.array(a.region, dtype=np.int32)
         rx, ry, rw, rh = cv2.boundingRect(pts)
-        crop = frame[ry:ry+rh, rx:rx+rw].copy()
+        crop = canonical_frame[ry : ry + rh, rx : rx + rw].copy()
+
+        if crop.size == 0 or crop.shape[0] < 10 or crop.shape[1] < 10:
+            raise HTTPException(status_code=400, detail="Crop is empty or too small")
 
         pipeline.baseline_medians[asset_id] = crop
         pipeline.baseline_variants[asset_id] = pipeline.verifier.extractor.generate_variants(crop)
@@ -302,6 +351,9 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
                 """
                 INSERT INTO baselines (id, asset_id, kind, image_path, created_at)
                 VALUES (?, ?, 'median', ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    image_path = excluded.image_path,
+                    created_at = excluded.created_at
                 """,
                 (f"base-{asset_id}-{int(time.time())}", asset_id, str(img_path).replace("\\", "/"), time.time())
             )
@@ -317,7 +369,7 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
 
     @app.post("/api/assets/{asset_id}/baseline")
     def capture_baseline(asset_id: str, kind: str = "median", request: Request = None):
-        """Captures a baseline crop of the asset (kind: 'median', 'empty', or 'variant')."""
+        """Captures and persists a baseline crop of the asset in canonical coordinates (kind: 'median', 'empty', or 'variant')."""
         if request:
             check_permission(request, pipeline, min_role="operator")
         if asset_id not in pipeline.assets:
@@ -329,9 +381,38 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
             raise HTTPException(status_code=500, detail="No active camera frame")
 
         a = pipeline.assets[asset_id]
+        canonical_frame = pipeline.aligner.warp_to_reference(frame)
+        h, w = canonical_frame.shape[:2]
+
+        valid, err = validate_region_bounds(a.region, (h, w))
+        if not valid:
+            raise HTTPException(status_code=400, detail=f"Region out of frame bounds: {err}")
+
         pts = np.array(a.region, dtype=np.int32)
         rx, ry, rw, rh = cv2.boundingRect(pts)
-        crop = frame[ry:ry+rh, rx:rx+rw].copy()
+        crop = canonical_frame[ry : ry + rh, rx : rx + rw].copy()
+
+        if crop.size == 0 or crop.shape[0] < 10 or crop.shape[1] < 10:
+            raise HTTPException(status_code=400, detail="Baseline crop is empty or too small")
+
+        # Persist to disk and baselines table in SQLite so it survives restarts
+        baselines_dir = Path("data/baselines")
+        baselines_dir.mkdir(parents=True, exist_ok=True)
+        img_path = baselines_dir / f"{asset_id}_{kind}_{int(time.time())}.jpg"
+        cv2.imwrite(str(img_path), crop)
+
+        with pipeline.db_mgr.get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO baselines (id, asset_id, kind, image_path, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    image_path = excluded.image_path,
+                    created_at = excluded.created_at
+                """,
+                (f"base-{asset_id}-{kind}-{int(time.time())}", asset_id, kind, str(img_path).replace("\\", "/"), time.time())
+            )
+            conn.commit()
 
         if kind == "empty":
             pipeline.empty_rois[asset_id] = crop
@@ -339,7 +420,7 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
             pipeline.baseline_medians[asset_id] = crop
             pipeline.baseline_variants[asset_id] = pipeline.verifier.extractor.generate_variants(crop)
 
-        return {"ok": True, "asset_id": asset_id, "kind": kind, "message": f"{kind.capitalize()} baseline captured."}
+        return {"ok": True, "asset_id": asset_id, "kind": kind, "message": f"{kind.capitalize()} baseline captured and persisted."}
 
     @app.post("/api/assets/{asset_id}/authorize")
     def authorize_move(asset_id: str, req: AuthorizeMoveRequest, request: Request = None):
@@ -378,7 +459,8 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
 
             p_obj = json.loads(row[0])
             p_obj["status"] = "CONFIRMED"
-            pipeline.alert_router.dispatch(p_obj)
+            pipeline.outbox.enqueue(event_id, json.dumps(p_obj))
+            pipeline.alert_router.broadcast_ws(p_obj)
 
         return {"ok": True, "event_id": event_id, "status": "CONFIRMED"}
 
@@ -578,7 +660,34 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
         check_permission(request, pipeline, min_role="viewer")
         with pipeline.db_mgr.get_connection() as conn:
             res = pipeline.ledger_mgr.verify(conn, verify_disk_crops=True)
+            if res.get("ok"):
+                anchors = pipeline.anchor_service.get_anchors_from_file()
+                if anchors:
+                    a_check = pipeline.ledger_mgr.check_anchors(conn, anchors)
+                    res["anchors_checked"] = a_check.get("anchors_verified", 0)
+                    if not a_check.get("ok"):
+                        res["ok"] = False
+                        res["why"] = a_check.get("why")
         return res
+
+    @app.post("/api/ledger/anchor")
+    def anchor_ledger_head(request: Request, channel: str = "local_file"):
+        """Publishes the current cryptographic ledger head hash to an off-box anchor receipt."""
+        check_permission(request, pipeline, min_role="operator")
+        res = pipeline.anchor_ledger(channel=channel)
+        if not res:
+            raise HTTPException(status_code=400, detail="Cannot anchor empty ledger")
+        return {"ok": True, "anchor": res}
+
+    @app.get("/api/ledger/anchors")
+    def list_anchors(request: Request):
+        """Lists all published off-box anchor proofs and checkpoint receipts."""
+        check_permission(request, pipeline, min_role="viewer")
+        anchors = pipeline.anchor_service.get_anchors_from_file()
+        with pipeline.db_mgr.get_connection() as conn:
+            cur = conn.execute("SELECT id, ledger_idx, head_hash, channel, anchored_at, ref FROM anchors ORDER BY anchored_at DESC")
+            db_anchors = [dict(r) for r in cur.fetchall()]
+        return {"ok": True, "off_box_count": len(anchors), "anchors": db_anchors}
 
     @app.get("/api/ledger/head")
     def get_ledger_head(request: Request):
@@ -594,14 +703,24 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
     @app.get("/api/health")
     def get_system_health():
         meta = pipeline.verifier.get_model_metadata()
-        is_offline = pipeline.health_monitor.is_offline or not pipeline.capture.is_alive
+        processor_alive = bool(pipeline._thread and pipeline._thread.is_alive())
+        is_camera_offline = pipeline.health_monitor.is_offline or not pipeline.capture.is_alive
         is_obstructed = pipeline.health_monitor.is_obstructed
-        status = "offline" if is_offline else ("degraded" if is_obstructed else "healthy")
+
+        if pipeline.is_running and not processor_alive:
+            status = "unhealthy"
+        elif is_camera_offline:
+            status = "offline"
+        elif is_obstructed:
+            status = "degraded"
+        else:
+            status = "healthy"
 
         return {
             "status": status,
+            "processor_alive": processor_alive,
             "camera_obstructed": is_obstructed,
-            "camera_offline": is_offline,
+            "camera_offline": is_camera_offline,
             "fps": round(pipeline.current_fps, 1),
             "queue_depth": pipeline.outbox.get_pending_count(),
             "network_connected": pipeline.outbox.network_connected,
@@ -628,7 +747,8 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
                 status_code=403,
                 detail="Demo fault injection is disabled. Set security.demo_mode=true in config to enable."
             )
-        check_permission(request, pipeline, min_role="admin")
+        if pipeline.cfg.security.require_auth:
+            check_permission(request, pipeline, min_role="admin")
 
         if req.fault_type == "reset":
             return pipeline.demo_injector.reset_all()

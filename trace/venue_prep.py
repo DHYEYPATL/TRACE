@@ -64,11 +64,14 @@ def recalibrate_venue_lighting(config_path: str = "config/demo.yaml") -> None:
     time.sleep(1.0)
     success, frame, _ = pipeline.capture.read_latest()
     if success and frame is not None:
-        pipeline._capture_initial_baselines(frame)
-        print("  -> Reference frame captured.")
-        print("  -> Alignment homography registered.")
-        print("  -> Multi-lighting Visual DNA baselines calibrated for venue.")
-        print("Venue calibration complete! All assets registered in current room light.")
+        res = pipeline._capture_initial_baselines(frame, overwrite=True)
+        print("  -> Reference frame captured & persisted.")
+        print(f"  -> Calibrated baselines for {len(res.get('calibrated', []))} assets: {res.get('calibrated', [])}")
+        if res.get("failed"):
+            print(f"  -> WARNING: Baseline calibration failed for {len(res['failed'])} assets:")
+            for f in res["failed"]:
+                print(f"     - {f['asset_id']}: {f['reason']}")
+        print("Venue calibration complete!")
     else:
         print("Failed to capture camera frame. Check camera connection.")
 
@@ -79,9 +82,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="TRACE Venue Preparation & ArUco Marker Generator")
     parser.add_argument("--generate-markers", action="store_true", help="Generate printable ArUco marker stickers")
     parser.add_argument("--recalibrate", action="store_true", help="Re-calibrate baselines for venue lighting")
+    parser.add_argument("--config", type=str, default="config/webcam.yaml", help="Path to config file for calibration (default: config/webcam.yaml)")
     args = parser.parse_args()
 
     if args.recalibrate:
-        recalibrate_venue_lighting()
+        recalibrate_venue_lighting(args.config)
     else:
         generate_aruco_stickers()

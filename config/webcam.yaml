@@ -9,8 +9,8 @@ business_hours:
 
 cameras:
   - id: cam-1
-    name: "Live Branch Laptop Webcam"
-    source: "webcam:0" # Uses local webcam index 0
+    name: "Live Branch USB Webcam"
+    source: "webcam:1" # Uses attached USB webcam index 1 (or 'webcam:0' for built-in camera)
     process_fps: 5
     width: 1280
     height: 720
@@ -111,3 +111,7 @@ ledger:
 privacy:
   mask_people: true
   retention_days: 30
+
+security:
+  demo_mode: true
+  require_auth: false

@@ -505,9 +505,14 @@ function exportLedgerCSV() {
 // Scenario Fault Injector
 async function injectFault(faultType, assetId = null) {
   try {
+    const headers = { 'Content-Type': 'application/json' };
+    const token = localStorage.getItem('trace_token') || localStorage.getItem('trace_auth_token');
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
     const res = await fetch('/api/demo/inject', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: headers,
       body: JSON.stringify({
         fault_type: faultType,
         asset_id: assetId,
@@ -515,10 +520,12 @@ async function injectFault(faultType, assetId = null) {
       })
     });
     const data = await res.json();
-    if (data.ok) {
+    if (res.ok && data.ok) {
       console.log(`Fault ${faultType} injected:`, data);
       loadAuditEvents();
       loadReviewQueue();
+    } else {
+      alert(`Fault trigger error: ${data.detail || JSON.stringify(data)}`);
     }
   } catch (err) {
     alert(`Fault trigger error: ${err}`);
