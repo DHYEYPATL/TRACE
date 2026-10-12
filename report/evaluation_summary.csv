@@ -1,5 +1,5 @@
 Model,TP,FP,FN,TN,Precision,Recall,F1,FP_per_Hour,Median Latency (ms),P95 Latency (ms)
-1. Naive Pixel Diff,4,9,3,8,30.8%,57.1%,0.4,390.36,1600.0,1685.0
-2. + Temporal Voting,4,9,3,8,30.8%,57.1%,0.4,390.36,800.0,885.0
+1. Naive Pixel Diff,3,10,4,8,23.1%,42.9%,0.3,433.73,1600.0,1690.0
+2. + Temporal Voting,3,10,4,8,23.1%,42.9%,0.3,433.73,800.0,890.0
 3. + LabSobel Descriptor,1,10,6,9,9.1%,14.3%,0.1111,433.73,1600.0,1600.0
-4. Full TRACE Engine,7,4,0,10,63.6%,100.0%,0.7778,173.49,900.0,4400.0
+4. Full TRACE Engine,7,3,0,10,70.0%,100.0%,0.8235,130.12,900.0,4400.0

@@ -6,12 +6,14 @@ Matching Section 4, Section 10.1, and System Design Image 1.
 
 from __future__ import annotations
 
+import collections
 import datetime
 import json
 import logging
 import threading
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import cv2
 import numpy as np
@@ -88,6 +90,9 @@ class TracePipeline:
         self.baseline_medians: Dict[str, np.ndarray] = {}
         self.empty_rois: Dict[str, np.ndarray] = {}
 
+        # Rolling buffer of recent frames for genuine pre-incident evidence
+        self.recent_frames: collections.deque = collections.deque(maxlen=30)
+
         # Pipeline runtime state
         self.is_running: bool = False
         self._thread: Optional[threading.Thread] = None
@@ -98,7 +103,7 @@ class TracePipeline:
         self.total_frames_processed: int = 0
         self.lock = threading.Lock()
 
-        # Bootstrap FSMs and initial synthetic baselines
+        # Bootstrap FSMs and initial baselines
         self._init_assets_and_baselines()
 
     def _init_assets_and_baselines(self) -> None:
@@ -150,14 +155,11 @@ class TracePipeline:
                     """
                     INSERT OR REPLACE INTO states (
                         asset_id, state, belief, confidence, last_verified_at, updated_at
-                    ) VALUES (?, 'SAFE', 1.0, 1.0, ?, ?)
+                    ) VALUES (?, 'UNINITIALIZED', 0.0, 0.0, ?, ?)
                     """,
                     (a.id, time.time(), time.time())
                 )
                 conn.commit()
-
-        # Seed few-shot state classifier with mock safe door open/closed samples
-        self.state_classifier.seed_default_branch_samples("safe-02")
 
         # Load any existing persisted baselines from disk/db to survive restarts
         with self.db_mgr.get_connection() as conn:
@@ -172,10 +174,10 @@ class TracePipeline:
                     if crop is not None and crop.size > 0:
                         self.baseline_medians[asset_id] = crop
                         self.baseline_variants[asset_id] = self.verifier.extractor.generate_variants(crop)
-                        self.empty_rois[asset_id] = np.full_like(crop, 160)
+                        self.empty_rois[asset_id] = None
 
     def _capture_initial_baselines(self, frame_bgr: np.ndarray) -> None:
-        """Extracts initial median baselines and Visual DNA variants from reference frame."""
+        """Extracts initial median baselines and Visual DNA variants from reference frame without overwriting approved baselines."""
         self.aligner.register_reference(frame_bgr)
         self.health_monitor.calibrate_baseline(frame_bgr)
 
@@ -183,6 +185,10 @@ class TracePipeline:
         baselines_dir.mkdir(parents=True, exist_ok=True)
 
         for asset_id, a in self.assets.items():
+            # If baseline already exists and was loaded from approved storage, do not overwrite it!
+            if asset_id in self.baseline_medians and self.baseline_medians[asset_id] is not None:
+                continue
+
             if not a.region or len(a.region) < 3:
                 continue
 
@@ -194,10 +200,7 @@ class TracePipeline:
             # Visual DNA variants (brightness, contrast, blur)
             vars_vec = self.verifier.extractor.generate_variants(crop)
             self.baseline_variants[asset_id] = vars_vec
-
-            # Generate synthetic empty baseline (clean wall/desk background behind asset)
-            empty_crop = np.full_like(crop, 160)
-            self.empty_rois[asset_id] = empty_crop
+            self.empty_rois[asset_id] = None
 
             # Persist to disk and baselines table in SQLite
             img_path = baselines_dir / f"{asset_id}_init_median.jpg"
@@ -213,6 +216,17 @@ class TracePipeline:
                     (f"base-{asset_id}-init", asset_id, str(img_path).replace("\\", "/"), time.time())
                 )
                 conn.commit()
+
+    def _outbox_delivery_handler(self, event_info: Dict[str, Any]) -> bool:
+        """Durable outbox delivery handler dispatching alerts to router and websockets."""
+        try:
+            payload_str = event_info.get("payload", "{}") if isinstance(event_info, dict) else str(event_info)
+            payload = json.loads(payload_str) if isinstance(payload_str, str) else payload_str
+            self.alert_router.dispatch(payload)
+            return True
+        except Exception as e:
+            logger.error(f"Outbox delivery attempt failed: {e}")
+            return False
 
     def start(self) -> None:
         """Starts the capture and processing pipeline."""
@@ -249,18 +263,31 @@ class TracePipeline:
         target_fps = 5
         interval = 1.0 / target_fps
         t_last = time.time()
+        cam_id = self.cfg.cameras[0].id if self.cfg.cameras else "cam-1"
 
         while self.is_running:
             t_start = time.time()
-            success, raw_frame, capture_t = self.capture.read_latest()
+            env = self.capture.read_envelope(camera_id=cam_id)
 
-            if success and raw_frame is not None:
+            if env.is_valid and env.image is not None:
+                # Deduplication: process each frame ID at most once
+                if not env.is_new:
+                    time.sleep(0.02)
+                    continue
+
+                raw_frame = env.image
+                capture_t = env.captured_at_monotonic_ns / 1e9
+
                 # 1. Apply demo scenario perturbations if triggered
                 injected_frame, synthetic_person_mask = self.demo_injector.apply_to_frame(
                     raw_frame, self.assets, self.empty_rois
                 )
                 # Sync outbox network state with demo injector
                 self.outbox.set_network_state(not self.demo_injector.is_network_cut())
+
+                now = time.time()
+                # Store genuine unperturbed frame in rolling buffer for pre-incident evidence
+                self.recent_frames.append((now, injected_frame.copy()))
 
                 # 2. Camera health & optical obstruction evaluation
                 health_res = self.health_monitor.check(injected_frame, capture_t, landmark_ratio=self.aligner.inlier_ratio)
@@ -275,7 +302,6 @@ class TracePipeline:
 
                 # 5. Process registered assets
                 annotated = injected_frame.copy()
-                now = time.time()
 
                 for asset_id, asset_cfg in self.assets.items():
                     self._process_single_asset(
@@ -298,8 +324,8 @@ class TracePipeline:
                     if no.get("is_new_confirmation", False):
                         self._handle_new_object(no, injected_frame, person_mask, now)
 
-                # 7. Flush outbox store-and-forward queue
-                self.outbox.flush()
+                # 7. Flush outbox store-and-forward queue with durable delivery handler
+                self.outbox.flush(delivery_handler=self._outbox_delivery_handler)
 
                 # 8. Render HUD overlays on annotated frame
                 self._draw_hud(annotated, health_res, align_res, now)
@@ -315,6 +341,7 @@ class TracePipeline:
                     t_last = time.time()
             else:
                 # Camera feed unavailable, stalled, or disconnected: record offline state
+                capture_t = env.captured_at_monotonic_ns / 1e9 if env.captured_at_monotonic_ns else time.monotonic()
                 self.health_monitor.check(None, capture_t)
                 with self.db_mgr.get_connection() as conn:
                     for cam in self.cfg.cameras:
@@ -343,23 +370,26 @@ class TracePipeline:
         if not raw_region or len(raw_region) < 3:
             return
 
-        # Transform polygon by camera homography drift if applicable
-        aligned_region = self.aligner.transform_polygon(raw_region)
-        pts = np.array(aligned_region, dtype=np.int32)
-        rx, ry, rw, rh = cv2.boundingRect(pts)
-        h, w = frame_bgr.shape[:2]
+        # Canonical Reference Coordinate Alignment:
+        # Warp the current frame into the canonical reference coordinate system.
+        # This guarantees regions, relocation bboxes, and drift calculations are directly comparable.
+        canonical_frame = self.aligner.warp_to_reference(frame_bgr)
+        canonical_mask = self.aligner.warp_to_reference(person_mask) if person_mask is not None else None
+        h, w = canonical_frame.shape[:2]
 
+        pts = np.array(raw_region, dtype=np.int32)
+        rx, ry, rw, rh = cv2.boundingRect(pts)
         rx = max(0, min(w - 1, rx))
         ry = max(0, min(h - 1, ry))
         rw = max(1, min(w - rx, rw))
         rh = max(1, min(h - ry, rh))
 
-        live_crop = frame_bgr[ry : ry + rh, rx : rx + rw]
+        live_crop = canonical_frame[ry : ry + rh, rx : rx + rw]
 
-        # Visibility and occlusion calculation
+        # Visibility and occlusion calculation in canonical reference frame
         occlusion_ratio, visibility = self.people_segmenter.calculate_visibility_and_occlusion(
-            person_mask=person_mask,
-            region_pts=aligned_region,
+            person_mask=canonical_mask if canonical_mask is not None else person_mask,
+            region_pts=raw_region,
             frame_shape=(h, w)
         )
 
@@ -376,18 +406,18 @@ class TracePipeline:
             tag_id=asset_cfg.tag_id,
         )
 
-        # Asset localization and physical displacement
+        # Asset localization and physical displacement in canonical coordinate system
         found_elsewhere = False
         asset_displacement_frac = 0.0
         relocated_score = 0.0
 
-        # When presence in expected region drops, search wider frame to distinguish relocation from missing
+        # When presence in expected region drops, search canonical frame to distinguish relocation from missing
         if base_median is not None and ver_res["present_score"] < asset_cfg.thresholds.present:
             found_elsewhere, relocated_bbox, relocated_score = self.relocator.search(
-                frame_bgr=frame_bgr,
+                frame_bgr=canonical_frame,
                 template_crop_bgr=base_median,
                 exclude_zone=asset_cfg.zone or raw_region,
-                person_mask=person_mask,
+                person_mask=canonical_mask,
             )
             if found_elsewhere and relocated_bbox is not None:
                 bx, by, bw, bh = relocated_bbox
@@ -397,7 +427,7 @@ class TracePipeline:
         # State change prediction (e.g. Safe door open/closed)
         state_label, state_conf = self.state_classifier.predict(asset_id, live_crop)
 
-        # Build Observation with genuine asset displacement
+        # Build Observation with genuine asset displacement and tag verification status
         obs = Obs(
             t=timestamp,
             present_score=ver_res["present_score"],
@@ -409,13 +439,14 @@ class TracePipeline:
             state_label=state_label,
             state_conf=state_conf,
             tag_matched=ver_res["tag_matched"],
+            tag_status=ver_res.get("tag_status", "NONE"),
         )
 
         # Step State Machine
         prev_state = fsm.state.value
         new_state = fsm.step(obs).value
 
-        # Calculate event-specific confidence (distinct from generic presence score)
+        # Calculate event-specific confidence
         if new_state == "MOVED":
             event_confidence = max(0.75, float(relocated_score))
         elif new_state == "MISSING":
@@ -425,26 +456,16 @@ class TracePipeline:
         else:
             event_confidence = ver_res["present_score"]
 
-        # Update database `states` table
-        with self.db_mgr.get_connection() as conn:
-            conn.execute(
-                """
-                UPDATE states
-                SET state = ?, belief = ?, confidence = ?, last_verified_at = ?, updated_at = ?
-                WHERE asset_id = ?
-                """,
-                (new_state, fsm.belief, event_confidence, timestamp, timestamp, asset_id)
-            )
-            conn.commit()
-
         # Check Policy Engine for Alert Dispatch
-        if new_state != prev_state and new_state not in ("SAFE", "OCCLUDED", "RETURNED"):
+        if new_state != prev_state and new_state not in ("SAFE", "OCCLUDED", "RETURNED", "UNKNOWN", "UNINITIALIZED"):
+            # Alert transitions commit state, event, incident, ledger, and outbox atomically
             self._handle_alert_transition(
                 asset_id=asset_id,
                 asset_cfg=asset_cfg,
                 prev_state=prev_state,
                 new_state=new_state,
                 confidence=event_confidence,
+                belief=fsm.belief,
                 details={
                     "drift_frac": round(asset_displacement_frac, 3),
                     "threshold": asset_cfg.thresholds.move_frac,
@@ -454,9 +475,21 @@ class TracePipeline:
                 },
                 live_crop=live_crop,
                 base_crop=base_median if base_median is not None else live_crop,
-                person_mask_crop=person_mask[ry : ry + rh, rx : rx + rw],
+                person_mask_crop=canonical_mask[ry : ry + rh, rx : rx + rw] if canonical_mask is not None else None,
                 timestamp=timestamp,
             )
+        else:
+            # Routine non-alert state updates
+            with self.db_mgr.get_connection() as conn:
+                conn.execute(
+                    """
+                    UPDATE states
+                    SET state = ?, belief = ?, confidence = ?, last_verified_at = ?, updated_at = ?
+                    WHERE asset_id = ?
+                    """,
+                    (new_state, fsm.belief, event_confidence, timestamp, timestamp, asset_id)
+                )
+                conn.commit()
 
         # Draw asset box on annotated frame
         self._draw_asset_box(annotated_frame, pts, asset_cfg.name, new_state, fsm.belief)
@@ -468,10 +501,11 @@ class TracePipeline:
         prev_state: str,
         new_state: str,
         confidence: float,
+        belief: float,
         details: Dict[str, Any],
         live_crop: np.ndarray,
         base_crop: np.ndarray,
-        person_mask_crop: np.ndarray,
+        person_mask_crop: Optional[np.ndarray],
         timestamp: float,
     ) -> None:
         policy_res = self.policy_engine.evaluate_transition(
@@ -516,9 +550,20 @@ class TracePipeline:
             "details": details,
         }
 
-        # Atomically commit ledger append, incidents, events, and outbox enqueue in one transaction
+        # Atomically commit states update, ledger append, incidents, events, and outbox enqueue in ONE transaction
         with self.db_mgr.get_connection() as conn:
             try:
+                # 1. Update persisted state coherently with event
+                conn.execute(
+                    """
+                    UPDATE states
+                    SET state = ?, belief = ?, confidence = ?, last_verified_at = ?, updated_at = ?
+                    WHERE asset_id = ?
+                    """,
+                    (new_state, belief, confidence, timestamp, timestamp, asset_id)
+                )
+
+                # 2. Append to cryptographic ledger (within current transaction)
                 ledger_info = self.ledger_mgr.append(
                     db=conn,
                     event=event_payload,
@@ -527,6 +572,7 @@ class TracePipeline:
                 )
                 event_payload["ledger"] = ledger_info
 
+                # 3. Insert or update incident
                 if not policy_res.get("is_repeat"):
                     conn.execute(
                         """
@@ -543,6 +589,7 @@ class TracePipeline:
 
                 initial_status = "NEEDS_REVIEW" if policy_res.get("tier") == "NEEDS_REVIEW" else "NEW"
 
+                # 4. Insert event record
                 conn.execute(
                     """
                     INSERT INTO events (
@@ -557,7 +604,7 @@ class TracePipeline:
                     )
                 )
 
-                # Atomically enqueue into outbox queue
+                # 5. Atomically enqueue into outbox queue
                 self.outbox.enqueue_conn(conn, event_id, json.dumps(event_payload))
                 conn.commit()
             except Exception as e:
@@ -577,7 +624,7 @@ class TracePipeline:
         self,
         blob_info: Dict[str, Any],
         frame_bgr: np.ndarray,
-        person_mask: np.ndarray,
+        person_mask: Optional[np.ndarray],
         timestamp: float
     ) -> None:
         bx, by, bw, bh = blob_info["bbox"]
@@ -586,21 +633,39 @@ class TracePipeline:
         if crop.size == 0:
             return
 
+        cam_id = self.cfg.cameras[0].id if self.cfg.cameras else "cam-1"
+        foreign_id = f"foreign-{cam_id}-{blob_info.get('id', uuid.uuid4().hex[:6])}"
         event_id = str(uuid.uuid4())
         dt_str = datetime.datetime.fromtimestamp(timestamp).astimezone().isoformat()
 
-        # Evidence crop
+        # Genuine pre-incident evidence crop from rolling buffer (never synthetic grey)
+        before_crop = None
+        if self.recent_frames:
+            # Use earliest available clean frame prior to object placement
+            earliest_frame = self.recent_frames[0][1]
+            before_crop = earliest_frame[max(0, by): min(h, by+bh), max(0, bx): min(w, bx+bw)].copy()
+
+        if before_crop is None or before_crop.size == 0 or before_crop.shape != crop.shape:
+            before_crop = crop.copy()
+
+        crop_mask = None
+        if person_mask is not None:
+            crop_mask = person_mask[max(0, by): min(h, by+bh), max(0, bx): min(w, bx+bw)]
+
+        # Evidence crop with fail-closed privacy redaction
         ev_meta, crop_hashes = self.evidence_writer.save_crops(
             event_id=event_id,
-            before_crop=np.full_like(crop, 180),
+            before_crop=before_crop,
             after_crop=crop,
-            person_masked=True,
+            before_mask=crop_mask,
+            after_mask=crop_mask,
+            person_masked=self.cfg.privacy.mask_people,
         )
 
         event_payload = {
             "id": event_id,
-            "asset_id": blob_info["id"],
-            "camera_id": "cam-1",
+            "foreign_object_id": foreign_id,
+            "camera_id": cam_id,
             "type": "NEW_OBJECT",
             "severity": "medium",
             "confidence": 0.91,
@@ -613,47 +678,50 @@ class TracePipeline:
         }
 
         with self.db_mgr.get_connection() as conn:
-            # Register discovered new object in assets and states tables
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO assets (
-                    id, name, class, criticality, policy_mode, camera_id,
-                    region_polygon, zone_polygon, tag_id, present_threshold, active
-                ) VALUES (?, ?, 'new_object', 2, 'fixed', 'cam-1', '[]', '[]', NULL, 0.70, 1)
-                """,
-                (blob_info["id"], f"Unregistered Object ({blob_info['id']})")
-            )
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO states (
-                    asset_id, state, belief, confidence, last_verified_at, updated_at
-                ) VALUES (?, 'NEW_OBJECT', 0.91, 0.91, ?, ?)
-                """,
-                (blob_info["id"], timestamp, timestamp)
-            )
-
-            ledger_info = self.ledger_mgr.append(conn, event_payload, crop_hashes)
-            event_payload["ledger"] = ledger_info
-            incident_id = str(uuid.uuid4())
-            conn.execute(
-                "INSERT INTO incidents (id, asset_id, opened_at, status, counter) VALUES (?, ?, ?, 'OPEN', 1)",
-                (incident_id, blob_info["id"], timestamp)
-            )
-            conn.execute(
-                """
-                INSERT INTO events (
-                    id, asset_id, camera_id, type, severity, confidence, status,
-                    detected_at, received_at, before_path, after_path, payload_json, incident_id
-                ) VALUES (?, ?, 'cam-1', 'NEW_OBJECT', 'medium', 0.91, 'NEW', ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    event_id, blob_info["id"], timestamp, timestamp,
-                    ev_meta["before"], ev_meta["after"], json.dumps(event_payload), incident_id
+            try:
+                incident_id = str(uuid.uuid4())
+                # 1. Track foreign object in foreign_objects table (not polluting registered assets)
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO foreign_objects (
+                        id, camera_id, first_seen_at, last_seen_at, bbox_json, status, incident_id
+                    ) VALUES (?, ?, ?, ?, ?, 'ACTIVE', ?)
+                    """,
+                    (foreign_id, cam_id, timestamp - blob_info.get("persistence_s", 0), timestamp, json.dumps([bx, by, bw, bh]), incident_id)
                 )
-            )
-            conn.commit()
 
-        self.outbox.enqueue(event_id, json.dumps(event_payload))
+                # 2. Append to ledger within same transaction
+                ledger_info = self.ledger_mgr.append(conn, event_payload, crop_hashes, commit=False)
+                event_payload["ledger"] = ledger_info
+
+                # 3. Open incident
+                conn.execute(
+                    "INSERT INTO incidents (id, asset_id, opened_at, status, counter) VALUES (?, NULL, ?, 'OPEN', 1)",
+                    (incident_id, timestamp)
+                )
+
+                # 4. Insert event
+                conn.execute(
+                    """
+                    INSERT INTO events (
+                        id, asset_id, camera_id, type, severity, confidence, status,
+                        detected_at, received_at, before_path, after_path, payload_json, incident_id
+                    ) VALUES (?, NULL, ?, 'NEW_OBJECT', 'medium', 0.91, 'NEW', ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event_id, cam_id, timestamp, timestamp,
+                        ev_meta["before"], ev_meta["after"], json.dumps(event_payload), incident_id
+                    )
+                )
+
+                # 5. Atomically enqueue into outbox
+                self.outbox.enqueue_conn(conn, event_id, json.dumps(event_payload))
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                logger.error(f"Failed atomic persistence for new object {foreign_id}: {e}")
+                raise
+
         self.alert_router.dispatch(event_payload)
 
     def _draw_asset_box(

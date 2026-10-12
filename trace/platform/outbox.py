@@ -84,12 +84,16 @@ class OutboxManager:
         now = time.time()
 
         for outbox_id, event_id, payload_json, created_at in rows:
-            success = True
-            if delivery_handler:
-                try:
-                    success = delivery_handler({"event_id": event_id, "payload": payload_json})
-                except Exception:
-                    success = False
+            if delivery_handler is None:
+                # Without an active delivery handler, jobs remain safely pending
+                continue
+
+            success = False
+            try:
+                success = bool(delivery_handler({"event_id": event_id, "payload": payload_json}))
+            except Exception as e:
+                logger.warning(f"Outbox delivery handler raised error for {event_id}: {e}")
+                success = False
 
             if success:
                 cur.execute(

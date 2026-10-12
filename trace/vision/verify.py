@@ -72,7 +72,9 @@ class RegionVerifier:
                 "s_kp": 0.0,
                 "inliers": 0,
                 "empty_match": 1.0,
-                "tag_matched": True,
+                "tag_matched": tag_id is None,
+                "tag_status": "NONE" if tag_id is None else "UNREADABLE",
+                "detected_tag_id": None,
             }
 
         # 1. Embedding score s_emb: mean of top 3 cosine similarities to stored variants
@@ -120,8 +122,11 @@ class RegionVerifier:
             fused_score = 0.6 * s_emb + 0.4 * s_kp
 
         # 4. ArUco / QR tag check
+        # Explicit states: MATCH, MISMATCH, UNREADABLE, NONE
+        tag_status = "NONE"
         tag_matched = True
         actual_detected_tag = detected_tag_id
+
         if tag_id is not None:
             if actual_detected_tag is None and self.aruco_detector is not None:
                 try:
@@ -134,10 +139,16 @@ class RegionVerifier:
 
             if actual_detected_tag is not None:
                 if actual_detected_tag != tag_id:
+                    tag_status = "MISMATCH"
                     tag_matched = False
                     fused_score = min(fused_score, 0.2)  # Severe penalty for swapped tag!
                 else:
+                    tag_status = "MATCH"
                     tag_matched = True
+            else:
+                tag_status = "UNREADABLE"
+                # If an asset tag is expected but absent/unreadable, identity is NOT confirmed
+                tag_matched = False
 
         # 5. Empty-region baseline match (for positive-evidence MISSING)
         empty_match = 0.0
@@ -153,6 +164,8 @@ class RegionVerifier:
             "inliers": inliers,
             "empty_match": round(float(empty_match), 4),
             "tag_matched": tag_matched,
+            "tag_status": tag_status,
+            "detected_tag_id": actual_detected_tag,
         }
 
     @staticmethod

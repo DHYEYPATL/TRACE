@@ -1,28 +1,28 @@
 {
-  "benchmark_type": "Synthetic Multi-Scenario Regression Suite",
-  "timestamp_utc": "2026-10-12 06:52:39 UTC",
+  "benchmark_type": "Synthetic Multi-Scenario Regression Suite (synthetic_regression_v1)",
+  "timestamp_utc": "2026-10-12 08:24:17 UTC",
   "total_clips": 10,
   "total_frames": 415,
   "monitored_duration_s": 83.0,
   "ablation_results": {
     "1. Naive Pixel Diff": {
       "model_name": "1. Naive Pixel Diff",
-      "tp": 4,
-      "fp": 9,
-      "fn": 3,
+      "tp": 3,
+      "fp": 10,
+      "fn": 4,
       "tn": 8,
-      "precision": 0.3077,
-      "precision_ci": "[12.7%, 57.6%]",
-      "recall": 0.5714,
-      "recall_ci": "[25.1%, 84.2%]",
-      "f1": 0.4,
-      "false_alarms": 9,
-      "fp_per_hour": 390.36,
+      "precision": 0.2308,
+      "precision_ci": "[8.2%, 50.3%]",
+      "recall": 0.4286,
+      "recall_ci": "[15.8%, 75.0%]",
+      "f1": 0.3,
+      "false_alarms": 10,
+      "fp_per_hour": 433.73,
       "latency_stats": {
         "p50": 1600.0,
-        "p95": 1685.0,
+        "p95": 1690.0,
         "max": 1700.0,
-        "mean": 1625.0
+        "mean": 1633.33
       },
       "camera_hours": 0.0231,
       "category_stats": {
@@ -58,7 +58,7 @@
         },
         "ALARM_THEFT": {
           "tp": 0,
-          "fp": 9,
+          "fp": 10,
           "fn": 0,
           "tn": 0
         },
@@ -75,9 +75,9 @@
           "tn": 0
         },
         "SWAPPED": {
-          "tp": 1,
+          "tp": 0,
           "fp": 0,
-          "fn": 0,
+          "fn": 1,
           "tn": 0
         }
       },
@@ -254,9 +254,17 @@
           "clip": "clip_swap_lookalike",
           "event": "SWAPPED",
           "asset": "laptop-03",
-          "status": "TP",
+          "status": "FN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_swap_lookalike",
+          "event": "UNEXPECTED_ALARM_THEFT",
+          "asset": "laptop-03",
+          "status": "FP",
           "pred_type": "ALARM_THEFT",
-          "latency_ms": 1600.0
+          "timestamp": 2.8000000000000003
         },
         {
           "clip": "clip_recovery",
@@ -278,22 +286,22 @@
     },
     "2. + Temporal Voting": {
       "model_name": "2. + Temporal Voting",
-      "tp": 4,
-      "fp": 9,
-      "fn": 3,
+      "tp": 3,
+      "fp": 10,
+      "fn": 4,
       "tn": 8,
-      "precision": 0.3077,
-      "precision_ci": "[12.7%, 57.6%]",
-      "recall": 0.5714,
-      "recall_ci": "[25.1%, 84.2%]",
-      "f1": 0.4,
-      "false_alarms": 9,
-      "fp_per_hour": 390.36,
+      "precision": 0.2308,
+      "precision_ci": "[8.2%, 50.3%]",
+      "recall": 0.4286,
+      "recall_ci": "[15.8%, 75.0%]",
+      "f1": 0.3,
+      "false_alarms": 10,
+      "fp_per_hour": 433.73,
       "latency_stats": {
         "p50": 800.0,
-        "p95": 885.0,
+        "p95": 890.0,
         "max": 900.0,
-        "mean": 825.0
+        "mean": 833.33
       },
       "camera_hours": 0.0231,
       "category_stats": {
@@ -329,7 +337,7 @@
         },
         "ALARM_THEFT": {
           "tp": 0,
-          "fp": 9,
+          "fp": 10,
           "fn": 0,
           "tn": 0
         },
@@ -346,9 +354,9 @@
           "tn": 0
         },
         "SWAPPED": {
-          "tp": 1,
+          "tp": 0,
           "fp": 0,
-          "fn": 0,
+          "fn": 1,
           "tn": 0
         }
       },
@@ -525,9 +533,17 @@
           "clip": "clip_swap_lookalike",
           "event": "SWAPPED",
           "asset": "laptop-03",
-          "status": "TP",
+          "status": "FN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_swap_lookalike",
+          "event": "UNEXPECTED_ALARM_THEFT",
+          "asset": "laptop-03",
+          "status": "FP",
           "pred_type": "ALARM_THEFT",
-          "latency_ms": 800.0
+          "timestamp": 2.0
         },
         {
           "clip": "clip_recovery",
@@ -831,16 +847,16 @@
     "4. Full TRACE Engine": {
       "model_name": "4. Full TRACE Engine",
       "tp": 7,
-      "fp": 4,
+      "fp": 3,
       "fn": 0,
       "tn": 10,
-      "precision": 0.6364,
-      "precision_ci": "[35.4%, 84.8%]",
+      "precision": 0.7,
+      "precision_ci": "[39.7%, 89.2%]",
       "recall": 1.0,
       "recall_ci": "[64.6%, 100.0%]",
-      "f1": 0.7778,
-      "false_alarms": 4,
-      "fp_per_hour": 173.49,
+      "f1": 0.8235,
+      "false_alarms": 3,
+      "fp_per_hour": 130.12,
       "latency_stats": {
         "p50": 900.0,
         "p95": 4400.0,
@@ -858,12 +874,6 @@
         "MOVED": {
           "tp": 2,
           "fp": 0,
-          "fn": 0,
-          "tn": 0
-        },
-        "SWAPPED": {
-          "tp": 1,
-          "fp": 1,
           "fn": 0,
           "tn": 0
         },
@@ -908,6 +918,12 @@
           "fp": 0,
           "fn": 0,
           "tn": 2
+        },
+        "SWAPPED": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0,
+          "tn": 0
         }
       },
       "details": [
@@ -950,14 +966,6 @@
           "status": "TN",
           "pred_type": null,
           "latency_ms": null
-        },
-        {
-          "clip": "clip_move",
-          "event": "UNEXPECTED_SWAPPED",
-          "asset": "safe-02",
-          "status": "FP",
-          "pred_type": "SWAPPED",
-          "timestamp": 4.6000000000000005
         },
         {
           "clip": "clip_missing",

@@ -89,6 +89,6 @@ privacy:
 security:
   demo_mode: false
   require_auth: true
-  admin_token: "${TRACE_ADMIN_TOKEN:trace-prod-admin-9f82b7c4d1e2}"
-  operator_token: "${TRACE_OPERATOR_TOKEN:trace-prod-operator-5a43b2c1}"
-  viewer_token: "${TRACE_VIEWER_TOKEN:trace-prod-viewer-11223344}"
+  admin_token: "${TRACE_ADMIN_TOKEN}"
+  operator_token: "${TRACE_OPERATOR_TOKEN}"
+  viewer_token: "${TRACE_VIEWER_TOKEN}"

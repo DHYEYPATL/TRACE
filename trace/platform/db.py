@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS states (
 -- 5. incidents: folds repeats of events for the same asset
 CREATE TABLE IF NOT EXISTS incidents (
     id TEXT PRIMARY KEY,
-    asset_id TEXT NOT NULL,
+    asset_id TEXT,
     opened_at REAL NOT NULL,
     closed_at REAL,
     status TEXT NOT NULL DEFAULT 'OPEN', -- 'OPEN', 'ACKNOWLEDGED', 'RESOLVED'
@@ -80,7 +80,7 @@ CREATE TABLE IF NOT EXISTS incidents (
 -- 6. events: every incident trigger
 CREATE TABLE IF NOT EXISTS events (
     id TEXT PRIMARY KEY,
-    asset_id TEXT NOT NULL,
+    asset_id TEXT,
     camera_id TEXT NOT NULL,
     type TEXT NOT NULL,
     severity TEXT NOT NULL,
@@ -94,6 +94,17 @@ CREATE TABLE IF NOT EXISTS events (
     incident_id TEXT,
     FOREIGN KEY (asset_id) REFERENCES assets (id),
     FOREIGN KEY (incident_id) REFERENCES incidents (id)
+);
+
+-- 6b. foreign_objects: unexpected objects detected in zones
+CREATE TABLE IF NOT EXISTS foreign_objects (
+    id TEXT PRIMARY KEY,
+    camera_id TEXT NOT NULL,
+    first_seen_at REAL NOT NULL,
+    last_seen_at REAL NOT NULL,
+    bbox_json TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'ACTIVE',
+    incident_id TEXT
 );
 
 -- 7. ledger: immutable append-only hash chain
@@ -173,15 +184,34 @@ CREATE TABLE IF NOT EXISTS users (
 """
 
 
+class ManagedConnection:
+    """Wraps sqlite3.Connection so that exiting the context manager automatically commits/rolls back AND closes the connection."""
+    def __init__(self, conn: sqlite3.Connection):
+        self._conn = conn
+
+    def __enter__(self) -> sqlite3.Connection:
+        self._conn.__enter__()
+        return self._conn
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            return self._conn.__exit__(exc_type, exc_val, exc_tb)
+        finally:
+            self._conn.close()
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
 class DatabaseManager:
-    """Manages SQLite connections with thread safety and WAL configuration."""
+    """Manages SQLite connections with thread safety, WAL configuration, and leak-free lifecycle."""
 
     def __init__(self, db_path: str = "data/trace.db"):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.init_db()
 
-    def get_connection(self) -> sqlite3.Connection:
+    def get_connection(self) -> ManagedConnection:
         conn = sqlite3.connect(
             str(self.db_path),
             timeout=15.0,
@@ -190,7 +220,7 @@ class DatabaseManager:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode = WAL;")
         conn.execute("PRAGMA foreign_keys = ON;")
-        return conn
+        return ManagedConnection(conn)
 
     def init_db(self) -> None:
         with self.get_connection() as conn:

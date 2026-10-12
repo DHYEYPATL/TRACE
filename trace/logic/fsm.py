@@ -53,6 +53,7 @@ class Obs:
     state_label: str = "CLOSED"    # State classifier output (OPEN / CLOSED)
     state_conf: float = 1.0        # State classifier confidence
     tag_matched: bool = True       # ArUco / QR tag identity verification
+    tag_status: str = "NONE"       # "MATCH", "MISMATCH", "UNREADABLE", "NONE"
 
 
 class AssetFSM:
@@ -67,7 +68,7 @@ class AssetFSM:
 
     def __init__(self, cfg: FSMConfig):
         self.cfg = cfg
-        self.state: S = S.SAFE
+        self.state: S = S.UNKNOWN
         self.doubt_engine = DoubtEngine(half_life_s=cfg.half_life_s)
 
         self.votes: Dict[str, int] = {}
@@ -128,9 +129,16 @@ class AssetFSM:
             n=c.moved_votes,
         )
 
-        swapped = (not o.tag_matched) or self.hold(
+        # Tag substitution requires confirmed MISMATCH held across swap_s window.
+        # An unreadable tag does not trigger substitution immediately.
+        swapped = self.hold(
+            "swapped_tag",
+            visible and (o.tag_status == "MISMATCH" or (not o.tag_matched and o.tag_status != "UNREADABLE")) and (o.present_score >= 0.4),
+            o.t,
+            secs=c.swap_s,
+        ) or self.hold(
             "swapped",
-            visible and (o.empty_match < 0.85) and (o.present_score < c.present),
+            visible and (o.empty_match < 0.85) and (o.present_score < c.present) and not o.found_elsewhere,
             o.t,
             secs=c.swap_s,
         )
@@ -219,7 +227,7 @@ class AssetFSM:
                 if self.occluded_exit_start is None:
                     self.occluded_exit_start = o.t
                 elif (o.t - self.occluded_exit_start) >= 2.0:
-                    self.state = S.SAFE if verified else (S.UNKNOWN if self.doubt_engine.is_unknown() else S.SAFE)
+                    self.state = S.SAFE if verified else S.UNKNOWN
                     self.occluded_exit_start = None
             else:
                 self.occluded_exit_start = None

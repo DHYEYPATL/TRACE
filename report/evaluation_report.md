@@ -1,7 +1,7 @@
 # TRACE Multi-Scenario Regression Benchmark Report
 
-**Evaluation Suite:** Synthetic Multi-Scenario Regression Suite (10 Controlled Scenarios, 415 Frames)  
-**Date:** 2026-10-12 06:52:39 UTC  
+**Evaluation Suite:** Synthetic Multi-Scenario Regression Suite (synthetic_regression_v1, 10 Controlled Scenarios, 415 Frames)  
+**Date:** 2026-10-12 08:24:17 UTC  
 **Matching Protocol:** Strict 1-to-1 Type-Compatible Event Matching (Zero Ground-Truth Leakage)  
 **Disclosure:** This benchmark measures algorithmic behavior under controlled scenarios simulating physical phenomena (displacement, removal, swap, occlusion, optical obstruction, freeze, knock, and lighting variation). Physical camera validation requires continuous real-world recordings.
 
@@ -13,10 +13,10 @@ All detection metrics below were produced through **live frame-level execution o
 
 | Architecture Variant | TP | FP | FN | TN | Precision (95% CI) | Recall (95% CI) | F1 Score | FP / Camera-Hour |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **1. Naive Pixel Diff** | 4 | 9 | 3 | 8 | 30.8% (4/13) [12.7%, 57.6%] | 57.1% (4/7) [25.1%, 84.2%] | 0.400 | 390.36 |
-| **2. + Temporal Voting** | 4 | 9 | 3 | 8 | 30.8% (4/13) [12.7%, 57.6%] | 57.1% (4/7) [25.1%, 84.2%] | 0.400 | 390.36 |
+| **1. Naive Pixel Diff** | 3 | 10 | 4 | 8 | 23.1% (3/13) [8.2%, 50.3%] | 42.9% (3/7) [15.8%, 75.0%] | 0.300 | 433.73 |
+| **2. + Temporal Voting** | 3 | 10 | 4 | 8 | 23.1% (3/13) [8.2%, 50.3%] | 42.9% (3/7) [15.8%, 75.0%] | 0.300 | 433.73 |
 | **3. + LabSobel Descriptor** | 1 | 10 | 6 | 9 | 9.1% (1/11) [1.6%, 37.7%] | 14.3% (1/7) [2.6%, 51.3%] | 0.111 | 433.73 |
-| **4. Full TRACE Engine** | **7** | **4** | **0** | **10** | **63.6%** (7/11) **[35.4%, 84.8%]** | **100.0%** (7/7) **[64.6%, 100.0%]** | **0.778** | **173.49** |
+| **4. Full TRACE Engine** | **7** | **3** | **0** | **10** | **70.0%** (7/10) **[39.7%, 89.2%]** | **100.0%** (7/7) **[64.6%, 100.0%]** | **0.824** | **130.12** |
 
 ---
 
@@ -26,13 +26,13 @@ All detection metrics below were produced through **live frame-level execution o
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
 | **MOVED** | Asset displaced > 10% region diagonal | 2 | 0 | 0 | - | 100.0% | 100.0% |
 | **MISSING** | Asset removed; bare desk background proof | 1 | 0 | 0 | - | 100.0% | 100.0% |
-| **SWAPPED** | Lookalike object substituted in region | 1 | 1 | 0 | - | 100.0% | 100.0% |
+| **SWAPPED** | Lookalike object substituted in region | 1 | 0 | 0 | - | 100.0% | 100.0% |
 | **CAMERA_OBSTRUCTED** | Optical lens physically blocked | 1 | 0 | 0 | - | 100.0% | 100.0% |
 | **CAMERA_OFFLINE** | Frozen video stream (> 2.0s bit-identical) | 1 | 0 | 0 | - | 100.0% | 100.0% |
-| **CAMERA_TAMPERED** | Physical camera displacement > 25px | 1 | 1 | 0 | - | 100.0% | 100.0% |
-| **STABLE (Negative)** | Static scene under normal lighting | - | 0 | - | 7 | N/A | Zero false alarms |
-| **OCCLUDED (Negative)**| Human standing in front of asset | - | 0 | - | 1 | N/A | Zero theft alarms |
-| **LIGHTING (Negative)**| 60% ambient illumination drop | - | 0 | - | 2 | N/A | Zero false alarms |
+| **CAMERA_TAMPERED** | Physical camera displacement > 25px | 1 | 1 | 0 | - | 50.0% | 100.0% |
+| **STABLE (Negative)** | Static scene under normal lighting | - | 0 | - | 7 | N/A | 0 false alarms |
+| **OCCLUDED (Negative)**| Human standing in front of asset | - | 0 | - | 1 | N/A | 0 false alarms |
+| **LIGHTING (Negative)**| 60% ambient illumination drop | - | 0 | - | 2 | N/A | 0 false alarms |
 
 ---
 

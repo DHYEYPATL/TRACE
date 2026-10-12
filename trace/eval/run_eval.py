@@ -75,13 +75,13 @@ def is_compatible_alert(expected_type: str, alert_type: str) -> bool:
     if expected == "MISSING":
         return actual in ("MISSING", "ALARM_THEFT")
     if expected == "SWAPPED":
-        return actual in ("SWAPPED", "ALARM_THEFT")
+        return actual == "SWAPPED"
     if expected == "CAMERA_OBSTRUCTED":
-        return "OBSTRUCTED" in actual or actual == "ALARM_THEFT"
+        return "OBSTRUCTED" in actual
     if expected == "CAMERA_OFFLINE":
-        return "OFFLINE" in actual or actual == "ALARM_THEFT"
+        return "OFFLINE" in actual
     if expected == "CAMERA_TAMPERED":
-        return "TAMPERED" in actual or actual == "ALARM_THEFT"
+        return "TAMPERED" in actual
     if expected == "STATE_CHANGED":
         return actual == "STATE_CHANGED"
     return expected == actual
@@ -259,12 +259,20 @@ def run_full_evaluation(out_dir: str = "report") -> Dict[str, Any]:
     print("=" * 70)
 
     # 1. Build dataset and ground-truth manifest
-    builder = EvaluationDatasetBuilder()
-    manifest, clip_frames = builder.build_standard_evaluation_suite()
-
     manifest_path = Path("data/eval_manifest.json")
-    manifest.save(manifest_path)
-    print(f"Generated {len(manifest.clips)} test clips with ground-truth manifest saved at {manifest_path}")
+    builder = EvaluationDatasetBuilder()
+    if manifest_path.exists():
+        try:
+            manifest = EvaluationDatasetManifest.load(manifest_path)
+            _, clip_frames = builder.build_standard_evaluation_suite()
+            print(f"Loaded existing ground-truth manifest from {manifest_path}")
+        except Exception:
+            manifest, clip_frames = builder.build_standard_evaluation_suite()
+            manifest.save(manifest_path)
+    else:
+        manifest, clip_frames = builder.build_standard_evaluation_suite()
+        manifest.save(manifest_path)
+        print(f"Generated {len(manifest.clips)} test clips with ground-truth manifest saved at {manifest_path}")
 
     # 2. Instantiate real baselines
     models = {
@@ -288,7 +296,7 @@ def run_full_evaluation(out_dir: str = "report") -> Dict[str, Any]:
     json_path = out_path / "evaluation_results.json"
     trace_res = ablation_results["4. Full TRACE Engine"]
     full_export = {
-        "benchmark_type": "Synthetic Multi-Scenario Regression Suite",
+        "benchmark_type": "Synthetic Multi-Scenario Regression Suite (synthetic_regression_v1)",
         "timestamp_utc": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
         "total_clips": len(manifest.clips),
         "total_frames": sum(len(f) for f in clip_frames.values()),
@@ -312,13 +320,36 @@ def run_full_evaluation(out_dir: str = "report") -> Dict[str, Any]:
             ])
     print(f"Evaluation summary CSV written to {csv_path}")
 
-    # 5. Generate Markdown report with honest disclosures and category metrics
+    # 5. Generate Markdown report with dynamic category metrics and honest disclosures
     trace_lat = trace_res["latency_stats"]
     cat_stats = trace_res.get("category_stats", {})
 
+    def _cat_ratio(cat_name: str) -> Tuple[str, str, int, int, int]:
+        c = cat_stats.get(cat_name, {})
+        c_tp = c.get("tp", 0)
+        c_fp = c.get("fp", 0)
+        c_fn = c.get("fn", 0)
+        prec = f"{(c_tp / (c_tp + c_fp) * 100):.1f}%" if (c_tp + c_fp) > 0 else "N/A"
+        rec = f"{(c_tp / (c_tp + c_fn) * 100):.1f}%" if (c_tp + c_fn) > 0 else "N/A"
+        return prec, rec, c_tp, c_fp, c_fn
+
+    p_moved, r_moved, tp_moved, fp_moved, fn_moved = _cat_ratio("MOVED")
+    p_miss, r_miss, tp_miss, fp_miss, fn_miss = _cat_ratio("MISSING")
+    p_swap, r_swap, tp_swap, fp_swap, fn_swap = _cat_ratio("SWAPPED")
+    p_obs, r_obs, tp_obs, fp_obs, fn_obs = _cat_ratio("CAMERA_OBSTRUCTED")
+    p_off, r_off, tp_off, fp_off, fn_off = _cat_ratio("CAMERA_OFFLINE")
+    p_tamp, r_tamp, tp_tamp, fp_tamp, fn_tamp = _cat_ratio("CAMERA_TAMPERED")
+
+    tn_stable = cat_stats.get("STABLE", {}).get("tn", 0)
+    fp_stable = cat_stats.get("STABLE", {}).get("fp", 0)
+    tn_occl = cat_stats.get("OCCLUDED", {}).get("tn", 0)
+    fp_occl = cat_stats.get("OCCLUDED", {}).get("fp", 0)
+    tn_light = cat_stats.get("LIGHTING_CHANGE", {}).get("tn", 0)
+    fp_light = cat_stats.get("LIGHTING_CHANGE", {}).get("fp", 0)
+
     report_md = f"""# TRACE Multi-Scenario Regression Benchmark Report
 
-**Evaluation Suite:** Synthetic Multi-Scenario Regression Suite (10 Controlled Scenarios, 415 Frames)  
+**Evaluation Suite:** Synthetic Multi-Scenario Regression Suite (synthetic_regression_v1, 10 Controlled Scenarios, 415 Frames)  
 **Date:** {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}  
 **Matching Protocol:** Strict 1-to-1 Type-Compatible Event Matching (Zero Ground-Truth Leakage)  
 **Disclosure:** This benchmark measures algorithmic behavior under controlled scenarios simulating physical phenomena (displacement, removal, swap, occlusion, optical obstruction, freeze, knock, and lighting variation). Physical camera validation requires continuous real-world recordings.
@@ -342,15 +373,15 @@ All detection metrics below were produced through **live frame-level execution o
 
 | Event Category | Ground-Truth Intent | TP | FP | FN | TN | Category Precision | Category Recall |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **MOVED** | Asset displaced > 10% region diagonal | {cat_stats.get('MOVED', {}).get('tp', 0)} | {cat_stats.get('MOVED', {}).get('fp', 0)} | {cat_stats.get('MOVED', {}).get('fn', 0)} | - | 100.0% | 100.0% |
-| **MISSING** | Asset removed; bare desk background proof | {cat_stats.get('MISSING', {}).get('tp', 0)} | {cat_stats.get('MISSING', {}).get('fp', 0)} | {cat_stats.get('MISSING', {}).get('fn', 0)} | - | 100.0% | 100.0% |
-| **SWAPPED** | Lookalike object substituted in region | {cat_stats.get('SWAPPED', {}).get('tp', 0)} | {cat_stats.get('SWAPPED', {}).get('fp', 0)} | {cat_stats.get('SWAPPED', {}).get('fn', 0)} | - | 100.0% | 100.0% |
-| **CAMERA_OBSTRUCTED** | Optical lens physically blocked | {cat_stats.get('CAMERA_OBSTRUCTED', {}).get('tp', 0)} | {cat_stats.get('CAMERA_OBSTRUCTED', {}).get('fp', 0)} | {cat_stats.get('CAMERA_OBSTRUCTED', {}).get('fn', 0)} | - | 100.0% | 100.0% |
-| **CAMERA_OFFLINE** | Frozen video stream (> 2.0s bit-identical) | {cat_stats.get('CAMERA_OFFLINE', {}).get('tp', 0)} | {cat_stats.get('CAMERA_OFFLINE', {}).get('fp', 0)} | {cat_stats.get('CAMERA_OFFLINE', {}).get('fn', 0)} | - | 100.0% | 100.0% |
-| **CAMERA_TAMPERED** | Physical camera displacement > 25px | {cat_stats.get('CAMERA_TAMPERED', {}).get('tp', 0)} | {cat_stats.get('CAMERA_TAMPERED', {}).get('fp', 0)} | {cat_stats.get('CAMERA_TAMPERED', {}).get('fn', 0)} | - | 100.0% | 100.0% |
-| **STABLE (Negative)** | Static scene under normal lighting | - | 0 | - | {cat_stats.get('STABLE', {}).get('tn', 0)} | N/A | Zero false alarms |
-| **OCCLUDED (Negative)**| Human standing in front of asset | - | 0 | - | {cat_stats.get('OCCLUDED', {}).get('tn', 0)} | N/A | Zero theft alarms |
-| **LIGHTING (Negative)**| 60% ambient illumination drop | - | 0 | - | {cat_stats.get('LIGHTING_CHANGE', {}).get('tn', 0)} | N/A | Zero false alarms |
+| **MOVED** | Asset displaced > 10% region diagonal | {tp_moved} | {fp_moved} | {fn_moved} | - | {p_moved} | {r_moved} |
+| **MISSING** | Asset removed; bare desk background proof | {tp_miss} | {fp_miss} | {fn_miss} | - | {p_miss} | {r_miss} |
+| **SWAPPED** | Lookalike object substituted in region | {tp_swap} | {fp_swap} | {fn_swap} | - | {p_swap} | {r_swap} |
+| **CAMERA_OBSTRUCTED** | Optical lens physically blocked | {tp_obs} | {fp_obs} | {fn_obs} | - | {p_obs} | {r_obs} |
+| **CAMERA_OFFLINE** | Frozen video stream (> 2.0s bit-identical) | {tp_off} | {fp_off} | {fn_off} | - | {p_off} | {r_off} |
+| **CAMERA_TAMPERED** | Physical camera displacement > 25px | {tp_tamp} | {fp_tamp} | {fn_tamp} | - | {p_tamp} | {r_tamp} |
+| **STABLE (Negative)** | Static scene under normal lighting | - | {fp_stable} | - | {tn_stable} | N/A | {f"{fp_stable} false alarms" if fp_stable > 0 else "0 false alarms"} |
+| **OCCLUDED (Negative)**| Human standing in front of asset | - | {fp_occl} | - | {tn_occl} | N/A | {f"{fp_occl} false alarms" if fp_occl > 0 else "0 false alarms"} |
+| **LIGHTING (Negative)**| 60% ambient illumination drop | - | {fp_light} | - | {tn_light} | N/A | {f"{fp_light} false alarms" if fp_light > 0 else "0 false alarms"} |
 
 ---
 

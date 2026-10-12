@@ -138,10 +138,27 @@ class AppConfig(BaseModel):
         if self.profile == "production":
             if not self.security.require_auth:
                 raise ValueError("Production configuration MUST require authentication (security.require_auth=true).")
-            if self.security.admin_token in ("trace-admin-secret-key", "", None):
-                raise ValueError("Production configuration cannot use default or empty admin_token. Set TRACE_ADMIN_TOKEN.")
             if self.security.demo_mode:
                 raise ValueError("Production configuration cannot have demo_mode enabled.")
+
+            known_placeholders = {
+                "trace-admin-secret-key", "trace-operator-secret-key", "trace-viewer-secret-key",
+                "trace-prod-admin-9f82b7c4d1e2", "trace-prod-operator-5a43b2c1", "trace-prod-viewer-11223344",
+                "admin", "password", "secret", "123456", "token"
+            }
+            tokens = {
+                "admin": self.security.admin_token,
+                "operator": self.security.operator_token,
+                "viewer": self.security.viewer_token,
+            }
+            for role, t in tokens.items():
+                if not t or t in known_placeholders or len(t) < 16:
+                    raise ValueError(
+                        f"Production configuration requires a strong, unique secret for {role}_token (>=16 chars). "
+                        f"Got missing, weak, or known placeholder token."
+                    )
+            if len(set(tokens.values())) < len(tokens):
+                raise ValueError("Production tokens for admin, operator, and viewer must be distinct.")
         return self
 
 

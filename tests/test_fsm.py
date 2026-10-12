@@ -66,17 +66,31 @@ def test_fsm_moved_votes_and_returned_hysteresis():
 
 
 def test_fsm_swapped_identity_mismatch():
-    cfg = FSMConfig()
+    cfg = FSMConfig(swap_s=2.0)
     fsm = AssetFSM(cfg)
 
-    # Tag mismatch should trigger SWAPPED immediately
-    s = fsm.step(Obs(
+    # 1. Single spurious tag reading does NOT immediately trigger SWAPPED (Finding 5)
+    s1 = fsm.step(Obs(
         t=1.0,
         present_score=0.8,
         drift_frac=0.0,
         visibility=0.95,
         empty_match=0.1,
         camera_ok=True,
-        tag_matched=False, # Tag mismatch!
+        tag_matched=False,
+        tag_status="MISMATCH",
     ))
-    assert s == S.SWAPPED
+    assert s1 != S.SWAPPED
+
+    # 2. Sustained tag mismatch across the swap window confirms SWAPPED
+    s2 = fsm.step(Obs(
+        t=4.0,
+        present_score=0.8,
+        drift_frac=0.0,
+        visibility=0.95,
+        empty_match=0.1,
+        camera_ok=True,
+        tag_matched=False,
+        tag_status="MISMATCH",
+    ))
+    assert s2 == S.SWAPPED

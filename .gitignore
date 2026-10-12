@@ -32,5 +32,5 @@ data/recordings/*
 !data/recordings/.gitkeep
 
 # Preserve required directory structures & static assets
-!data/aruco_stickers/
-!data/baselines/
+data/baselines/*
+!data/baselines/.gitkeep

@@ -81,6 +81,36 @@ class AssetRelocator:
         if best_score >= self.match_threshold and best_loc is not None:
             bx, by = best_loc
             bw, bh = int(w_t * best_scale), int(h_t * best_scale)
+
+            # 1. Full candidate bounding-box overlap check against exclude_zone
+            if exclude_zone and len(exclude_zone) >= 3:
+                zone_pts = np.array(exclude_zone, dtype=np.int32)
+                cand_mask = np.zeros((h_f, w_f), dtype=np.uint8)
+                cv2.rectangle(cand_mask, (bx, by), (bx + bw, by + bh), 255, -1)
+                zone_mask = np.zeros((h_f, w_f), dtype=np.uint8)
+                cv2.fillPoly(zone_mask, [zone_pts], 255)
+                overlap = cv2.bitwise_and(cand_mask, zone_mask)
+                overlap_area = float(np.count_nonzero(overlap))
+                cand_area = float(max(1, bw * bh))
+                # If candidate still heavily overlaps (> 80%) with expected baseline zone, it is not relocated
+                if (overlap_area / cand_area) > 0.80:
+                    return False, None, best_score
+
+            # 2. Genuine ORB keypoint identity verification on candidate crop
+            cand_crop = frame_bgr[by : by + bh, bx : bx + bw]
+            if cand_crop.size > 0:
+                try:
+                    gray_cand = cv2.cvtColor(cand_crop, cv2.COLOR_BGR2GRAY)
+                    kp1, des1 = self.orb.detectAndCompute(gray_tmpl, None)
+                    kp2, des2 = self.orb.detectAndCompute(gray_cand, None)
+                    if des1 is not None and des2 is not None and len(des1) >= 5 and len(des2) >= 5:
+                        matches = self.bf.match(des1, des2)
+                        inliers = [m for m in matches if m.distance < 55.0]
+                        if len(inliers) >= 4:
+                            best_score = max(best_score, 0.85)
+                except Exception:
+                    pass
+
             return True, (bx, by, bw, bh), best_score
 
         return False, None, max(0.0, best_score)

@@ -25,9 +25,21 @@ class FrameEnvelope:
     frame_id: int
     captured_at_utc: datetime.datetime
     captured_monotonic_ns: int
-    image_bgr: np.ndarray
+    image_bgr: Optional[np.ndarray]
     source_status: str  # "HEALTHY", "STALE", "DISCONNECTED"
     is_new: bool = True
+
+    @property
+    def is_valid(self) -> bool:
+        return self.image_bgr is not None and self.source_status == "HEALTHY"
+
+    @property
+    def image(self) -> Optional[np.ndarray]:
+        return self.image_bgr
+
+    @property
+    def captured_at_monotonic_ns(self) -> int:
+        return self.captured_monotonic_ns
 
 
 def generate_synthetic_branch_frame(frame_idx: int, width: int = 1280, height: int = 720) -> np.ndarray:
@@ -140,11 +152,13 @@ class FrameCapture:
         self.latest_frame: Optional[np.ndarray] = None
         self.last_frame_time: float = 0.0
         self.last_frame_received_mono: float = 0.0
+        self.last_frame_captured_utc: Optional[datetime.datetime] = None
+        self.last_frame_captured_mono_ns: int = 0
         self.frame_counter: int = 0
         self.is_running: bool = False
         self.is_connected: bool = False
         self.is_synthetic: bool = (source_uri == "synthetic" or source_uri.startswith("synth"))
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._thread: Optional[threading.Thread] = None
 
     def start(self) -> None:
@@ -209,6 +223,8 @@ class FrameCapture:
                     self.latest_frame = frame
                     self.last_frame_time = time.time()
                     self.last_frame_received_mono = time.monotonic()
+                    self.last_frame_captured_utc = datetime.datetime.now(datetime.timezone.utc)
+                    self.last_frame_captured_mono_ns = time.monotonic_ns()
                     self.frame_counter += 1
 
             elapsed = time.time() - t0
@@ -216,15 +232,15 @@ class FrameCapture:
             if sleep_time > 0:
                 time.sleep(sleep_time)
 
-    def wait_for_first_frame(self, timeout_sec: float = 5.0) -> Optional[np.ndarray]:
-        """Blocks until the first valid frame arrives or timeout occurs."""
+    def wait_for_first_frame(self, timeout_sec: float = 5.0) -> Tuple[bool, Optional[np.ndarray], float]:
+        """Blocks until the first valid frame arrives or timeout occurs. Returns (success, frame, timestamp)."""
         start_mono = time.monotonic()
         while (time.monotonic() - start_mono) < timeout_sec:
-            success, frame, _ = self.read_latest()
+            success, frame, ts = self.read_latest()
             if success and frame is not None:
-                return frame
+                return True, frame, ts
             time.sleep(0.05)
-        return None
+        return False, None, 0.0
 
     def read_latest(self) -> Tuple[bool, Optional[np.ndarray], float]:
         """
@@ -238,6 +254,8 @@ class FrameCapture:
                     self.latest_frame = generate_synthetic_branch_frame(0, self.width, self.height)
                     self.last_frame_time = time.time()
                     self.last_frame_received_mono = time.monotonic()
+                    self.last_frame_captured_utc = datetime.datetime.now(datetime.timezone.utc)
+                    self.last_frame_captured_mono_ns = time.monotonic_ns()
                 return True, self.latest_frame.copy(), self.last_frame_time
 
             # Real camera stream
@@ -250,32 +268,64 @@ class FrameCapture:
 
             return True, self.latest_frame.copy(), self.last_frame_time
 
-    def read_envelope(self, camera_id: str = "cam-1") -> Tuple[bool, Optional[FrameEnvelope]]:
+    @property
+    def is_alive(self) -> bool:
+        """Indicates whether capture loop is actively running and connected."""
+        return self.is_running and self.is_connected
+
+    def read_envelope(self, camera_id: str = "cam-1") -> FrameEnvelope:
         """
-        Returns (success, FrameEnvelope).
+        Returns FrameEnvelope record.
+        Non-blocking read that does NOT recursively acquire non-reentrant locks.
         Enforces frame deduplication so re-reading the same cached frame returns is_new=False.
         """
         with self._lock:
-            success, frame, ts = self.read_latest()
-            if not success or frame is None:
-                return False, None
+            if self.is_synthetic:
+                if self.latest_frame is None:
+                    self.latest_frame = generate_synthetic_branch_frame(0, self.width, self.height)
+                    self.last_frame_time = time.time()
+                    self.last_frame_received_mono = time.monotonic()
+                    self.last_frame_captured_utc = datetime.datetime.now(datetime.timezone.utc)
+                    self.last_frame_captured_mono_ns = time.monotonic_ns()
+                    self.frame_counter = 1
 
-            now_mono_ns = time.monotonic_ns()
-            now_utc = datetime.datetime.now(datetime.timezone.utc)
+            if self.latest_frame is None:
+                return FrameEnvelope(
+                    camera_id=camera_id,
+                    frame_id=0,
+                    captured_at_utc=datetime.datetime.now(datetime.timezone.utc),
+                    captured_monotonic_ns=time.monotonic_ns(),
+                    image_bgr=None,
+                    source_status="DISCONNECTED",
+                    is_new=False,
+                )
+
+            # Monotonic staleness check: if no frame received for > 2.0s, signal failure
+            is_stale = (not self.is_synthetic) and ((time.monotonic() - self.last_frame_received_mono) > 2.0)
+            if is_stale:
+                return FrameEnvelope(
+                    camera_id=camera_id,
+                    frame_id=self.frame_counter,
+                    captured_at_utc=self.last_frame_captured_utc or datetime.datetime.now(datetime.timezone.utc),
+                    captured_monotonic_ns=self.last_frame_captured_mono_ns or time.monotonic_ns(),
+                    image_bgr=self.latest_frame.copy(),
+                    source_status="STALE",
+                    is_new=False,
+                )
+
             fid = self.frame_counter
             is_new = (fid != getattr(self, "_last_delivered_fid", -1))
             self._last_delivered_fid = fid
 
-            env = FrameEnvelope(
+            return FrameEnvelope(
                 camera_id=camera_id,
                 frame_id=fid,
-                captured_at_utc=now_utc,
-                captured_monotonic_ns=now_mono_ns,
-                image_bgr=frame,
-                source_status="HEALTHY" if success else "STALE",
+                captured_at_utc=self.last_frame_captured_utc or datetime.datetime.now(datetime.timezone.utc),
+                captured_monotonic_ns=self.last_frame_captured_mono_ns or time.monotonic_ns(),
+                image_bgr=self.latest_frame.copy(),
+                source_status="HEALTHY",
                 is_new=is_new,
             )
-            return True, env
 
     def stop(self) -> None:
         self.is_running = False

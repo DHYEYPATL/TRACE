@@ -140,10 +140,26 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
     )
 
     ws_manager = ConnectionManager()
+    main_loop: Optional[asyncio.AbstractEventLoop] = None
 
-    # Register pipeline callback to broadcast alerts via websocket
+    @app.on_event("startup")
+    async def on_startup():
+        nonlocal main_loop
+        main_loop = asyncio.get_running_loop()
+
+    # Register pipeline callback to broadcast alerts via websocket thread-safely
     def _on_alert_callback(msg: Dict[str, Any]) -> None:
-        asyncio.run(ws_manager.broadcast_json(msg))
+        if main_loop and main_loop.is_running():
+            asyncio.run_coroutine_threadsafe(ws_manager.broadcast_json(msg), main_loop)
+        else:
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    asyncio.run_coroutine_threadsafe(ws_manager.broadcast_json(msg), loop)
+                else:
+                    loop.run_until_complete(ws_manager.broadcast_json(msg))
+            except Exception:
+                pass
 
     pipeline.alert_router.register_ws_callback(_on_alert_callback)
 
@@ -159,7 +175,7 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
         check_permission(request, pipeline, min_role="viewer")
         base_dir = Path("data/evidence").resolve()
         target_path = (base_dir / date_str / event_id / filename).resolve()
-        if not str(target_path).startswith(str(base_dir)):
+        if not target_path.is_relative_to(base_dir):
             raise HTTPException(status_code=403, detail="Access denied")
         if not target_path.is_file():
             raise HTTPException(status_code=404, detail="Evidence file not found")
@@ -195,20 +211,59 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
         )
         asset_cfg.thresholds.present = req.present_threshold
 
+        # Dedicated, isolated asset registration without re-initializing unrelated assets
+        timers = pipeline.cfg.get_timers()
+        half_life = pipeline.cfg.get_half_life(req.class_name)
+        from trace.logic.fsm import FSMConfig, AssetFSM
+        fsm_cfg = FSMConfig(
+            move_frac=asset_cfg.thresholds.move_frac,
+            present=req.present_threshold,
+            vis_floor=asset_cfg.thresholds.vis_floor,
+            missing_wait_s=timers.missing_wait_s,
+            swap_s=timers.swap_s,
+            moved_votes=timers.moved_votes,
+            returned_hold_s=timers.returned_hold_s,
+            half_life_s=half_life,
+        )
+        pipeline.fsms[req.id] = AssetFSM(fsm_cfg)
         pipeline.assets[req.id] = asset_cfg
-        pipeline._init_assets_and_baselines()
+
+        with pipeline.db_mgr.get_connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO assets (
+                    id, name, class, criticality, policy_mode, camera_id,
+                    region_polygon, zone_polygon, tag_id, present_threshold, active
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                """,
+                (
+                    req.id, req.name, req.class_name, req.criticality, req.mode, req.camera_id,
+                    json.dumps(req.region), json.dumps(zone_pts), req.tag_id, req.present_threshold
+                )
+            )
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO states (
+                    asset_id, state, belief, confidence, last_verified_at, updated_at
+                ) VALUES (?, 'UNINITIALIZED', 0.0, 0.0, ?, ?)
+                """,
+                (req.id, time.time(), time.time())
+            )
+            conn.commit()
 
         return {"ok": True, "asset_id": req.id, "message": "Asset registered successfully."}
 
     @app.get("/api/assets")
-    def list_assets():
+    def list_assets(request: Request):
+        check_permission(request, pipeline, min_role="viewer")
         with pipeline.db_mgr.get_connection() as conn:
             cur = conn.execute("SELECT * FROM assets WHERE active = 1")
             rows = [dict(r) for r in cur.fetchall()]
         return {"ok": True, "assets": rows}
 
     @app.get("/api/assets/{asset_id}")
-    def get_asset(asset_id: str):
+    def get_asset(asset_id: str, request: Request):
+        check_permission(request, pipeline, min_role="viewer")
         with pipeline.db_mgr.get_connection() as conn:
             cur = conn.execute("SELECT * FROM assets WHERE id = ?", (asset_id,))
             row = cur.fetchone()
@@ -300,8 +355,9 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
 
     # Review Queue (Selective Prediction, Section 3.3 #5 & 8.5)
     @app.get("/api/review-queue")
-    def get_review_queue():
+    def get_review_queue(request: Request):
         """Returns events with confidence 0.60 to 0.89 awaiting human review."""
+        check_permission(request, pipeline, min_role="viewer")
         with pipeline.db_mgr.get_connection() as conn:
             cur = conn.execute("SELECT * FROM events WHERE status = 'NEEDS_REVIEW' ORDER BY detected_at DESC")
             rows = [dict(r) for r in cur.fetchall()]
@@ -338,7 +394,8 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
 
     # Dynamic Settings & Policy Tuning (Screen 7, Section 8.2)
     @app.get("/api/settings")
-    def get_settings():
+    def get_settings(request: Request):
+        check_permission(request, pipeline, min_role="viewer")
         return {
             "site": pipeline.cfg.site,
             "profile": pipeline.cfg.profile,
@@ -405,7 +462,8 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
 
     # 2. State & Live Metrics
     @app.get("/api/state")
-    def get_current_states():
+    def get_current_states(request: Request):
+        check_permission(request, pipeline, min_role="viewer")
         with pipeline.db_mgr.get_connection() as conn:
             cur = conn.execute("""
                 SELECT a.id, a.name, a.class, a.criticality, a.policy_mode,
@@ -416,13 +474,16 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
             """)
             assets_status = [dict(r) for r in cur.fetchall()]
 
+        is_offline = pipeline.health_monitor.is_offline or not pipeline.capture.is_alive
+        camera_status = "OFFLINE" if is_offline else ("OBSTRUCTED" if pipeline.health_monitor.is_obstructed else "HEALTHY")
+
         return {
             "ok": True,
             "site": pipeline.cfg.site,
             "timestamp": time.time(),
             "assets": assets_status,
             "fps": round(pipeline.current_fps, 1),
-            "camera_status": pipeline.health_monitor.is_obstructed and "OBSTRUCTED" or "HEALTHY",
+            "camera_status": camera_status,
             "network_status": pipeline.outbox.network_connected and "ONLINE" or "OFFLINE",
             "pending_outbox": pipeline.outbox.get_pending_count(),
         }
@@ -430,10 +491,12 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
     # 3. Events & Incidents
     @app.get("/api/events")
     def list_events(
+        request: Request,
         asset_id: Optional[str] = None,
         event_type: Optional[str] = None,
         limit: int = 50
     ):
+        check_permission(request, pipeline, min_role="viewer")
         query = "SELECT * FROM events WHERE 1=1"
         params = []
         if asset_id:
@@ -453,7 +516,8 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
         return {"ok": True, "count": len(rows), "events": rows}
 
     @app.get("/api/events/{event_id}")
-    def get_event(event_id: str):
+    def get_event(event_id: str, request: Request):
+        check_permission(request, pipeline, min_role="viewer")
         with pipeline.db_mgr.get_connection() as conn:
             cur = conn.execute("SELECT * FROM events WHERE id = ?", (event_id,))
             ev = cur.fetchone()
@@ -510,13 +574,15 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
 
     # 4. Cryptographic Ledger & Audit
     @app.get("/api/ledger/verify")
-    def verify_ledger():
+    def verify_ledger(request: Request):
+        check_permission(request, pipeline, min_role="viewer")
         with pipeline.db_mgr.get_connection() as conn:
             res = pipeline.ledger_mgr.verify(conn, verify_disk_crops=True)
         return res
 
     @app.get("/api/ledger/head")
-    def get_ledger_head():
+    def get_ledger_head(request: Request):
+        check_permission(request, pipeline, min_role="viewer")
         with pipeline.db_mgr.get_connection() as conn:
             cur = conn.execute("SELECT idx, hash, sig FROM ledger ORDER BY idx DESC LIMIT 1")
             row = cur.fetchone()
@@ -528,10 +594,14 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
     @app.get("/api/health")
     def get_system_health():
         meta = pipeline.verifier.get_model_metadata()
+        is_offline = pipeline.health_monitor.is_offline or not pipeline.capture.is_alive
+        is_obstructed = pipeline.health_monitor.is_obstructed
+        status = "offline" if is_offline else ("degraded" if is_obstructed else "healthy")
+
         return {
-            "status": "healthy" if not pipeline.health_monitor.is_obstructed else "degraded",
-            "camera_obstructed": pipeline.health_monitor.is_obstructed,
-            "camera_offline": pipeline.health_monitor.is_offline,
+            "status": status,
+            "camera_obstructed": is_obstructed,
+            "camera_offline": is_offline,
             "fps": round(pipeline.current_fps, 1),
             "queue_depth": pipeline.outbox.get_pending_count(),
             "network_connected": pipeline.outbox.network_connected,
@@ -577,7 +647,8 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
 
     # 7. Live MJPEG Video Stream
     @app.get("/api/video/feed")
-    def get_video_feed():
+    def get_video_feed(request: Request):
+        check_permission(request, pipeline, min_role="viewer")
         def _mjpeg_generator():
             while True:
                 with pipeline.lock:
@@ -596,9 +667,17 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
             media_type="multipart/x-mixed-replace; boundary=frame"
         )
 
-    # 8. WebSocket Stream
+    # 8. WebSocket Stream with Authentication Handshake
     @app.websocket("/ws/stream")
     async def websocket_endpoint(websocket: WebSocket):
+        sec = pipeline.cfg.security
+        if sec.require_auth:
+            token = websocket.headers.get("X-API-Key") or websocket.query_params.get("token")
+            valid_tokens = {sec.admin_token, sec.operator_token, sec.viewer_token}
+            if not token or token not in valid_tokens:
+                await websocket.close(code=1008) # Policy Violation
+                return
+
         await ws_manager.connect(websocket)
         try:
             while True:
@@ -610,10 +689,13 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
                     """)
                     states_list = [dict(r) for r in cur.fetchall()]
 
+                is_offline = pipeline.health_monitor.is_offline or not pipeline.capture.is_alive
+                cam_stat = "OFFLINE" if is_offline else ("OBSTRUCTED" if pipeline.health_monitor.is_obstructed else "HEALTHY")
+
                 msg = {
                     "kind": "state_heartbeat",
                     "fps": round(pipeline.current_fps, 1),
-                    "camera_status": "OBSTRUCTED" if pipeline.health_monitor.is_obstructed else "HEALTHY",
+                    "camera_status": cam_stat,
                     "network_status": "ONLINE" if pipeline.outbox.network_connected else "OFFLINE",
                     "queue_depth": pipeline.outbox.get_pending_count(),
                     "assets": states_list,

@@ -36,7 +36,7 @@ class StateClassifier:
         """
         samples = self.dataset.get(asset_id, [])
         if not samples:
-            return "DEFAULT", 1.0
+            return "UNKNOWN", 0.0
 
         live_vec = self.extractor.extract(crop_bgr)
 

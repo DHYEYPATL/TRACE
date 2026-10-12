@@ -26,19 +26,33 @@ class EvidenceWriter:
     def apply_privacy_mask(
         frame_bgr: np.ndarray,
         person_mask: Optional[np.ndarray] = None,
-        fail_closed_solid: bool = True
-    ) -> np.ndarray:
+        fail_closed: bool = True,
+        return_verified: bool = False,
+    ) -> Any:
         """
-        Applies mathematically irreversible mosaic pixelation + Gaussian blur.
-        Guarantees non-invertible information destruction per DPDP Act 2023 & GDPR.
+        Applies mosaic pixelation and Gaussian smoothing to protect individual privacy.
+        Returns:
+            - If return_verified=True: (redacted_frame, is_verified_by_detector)
+            - If return_verified=False: redacted_frame
+        If person_mask is None and fail_closed=True, applies conservative full-region
+        blur and reports verified=False so unverified frames are never falsely certified.
         """
         if frame_bgr is None or frame_bgr.size == 0:
             raise ValueError("Cannot redact empty frame")
 
-        if person_mask is None or not np.any(person_mask > 0):
-            return frame_bgr.copy()
-
         h, w = frame_bgr.shape[:2]
+
+        if person_mask is None:
+            if fail_closed:
+                # Detector missing or failed: apply conservative full privacy blur
+                blurred = cv2.GaussianBlur(frame_bgr, (51, 51), 0)
+                return (blurred, False) if return_verified else blurred
+            return (frame_bgr.copy(), False) if return_verified else frame_bgr.copy()
+
+        if not np.any(person_mask > 0):
+            # Detector ran and confirmed zero people in region
+            return (frame_bgr.copy(), True) if return_verified else frame_bgr.copy()
+
         # Normalize mask to 2D uint8
         if len(person_mask.shape) == 3:
             mask_2d = (person_mask[:, :, 0] > 0).astype(np.uint8) * 255
@@ -67,10 +81,10 @@ class EvidenceWriter:
         masked_region = out[mask_bool]
         if masked_region.size > 0:
             var = float(np.var(masked_region))
-            if var > 2500.0 and fail_closed_solid:
-                out[mask_bool] = (40, 40, 40) # Solid dark privacy fill
+            if var > 2500.0:
+                out[mask_bool] = (40, 40, 40)  # Solid dark privacy fill
 
-        return out
+        return (out, True) if return_verified else out
 
     def save_crops(
         self,
@@ -96,11 +110,13 @@ class EvidenceWriter:
 
         # Apply irreversible privacy redaction
         if person_masked:
-            clean_before = self.apply_privacy_mask(before_crop, before_mask)
-            clean_after = self.apply_privacy_mask(after_crop, after_mask)
+            clean_before, before_ok = self.apply_privacy_mask(before_crop, before_mask, fail_closed=True, return_verified=True)
+            clean_after, after_ok = self.apply_privacy_mask(after_crop, after_mask, fail_closed=True, return_verified=True)
         else:
-            clean_before = before_crop
-            clean_after = after_crop
+            clean_before = before_crop.copy()
+            clean_after = after_crop.copy()
+            before_ok = False
+            after_ok = False
 
         before_path = ev_dir / "before.jpg"
         after_path = ev_dir / "after.jpg"
@@ -118,11 +134,8 @@ class EvidenceWriter:
         if not sha_before or not sha_after:
             raise IOError(f"Evidence integrity failed: could not compute sha256 for event {event_id} crops")
 
-        # Dynamic privacy verification: verified if masking was applied and confirmed on disk
-        is_privacy_verified = False
-        if person_masked:
-            # Masking was requested and clean crops were verified
-            is_privacy_verified = True
+        # Privacy is verified only if detector verified both before and after images
+        is_privacy_verified = bool(person_masked and before_ok and after_ok)
 
         evidence_meta = {
             "before": str(before_path).replace("\\", "/"),
