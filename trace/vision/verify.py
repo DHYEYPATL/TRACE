@@ -34,6 +34,12 @@ class RegionVerifier:
             self.norm_type = cv2.NORM_HAMMING
 
         self.bf = cv2.BFMatcher(self.norm_type)
+        try:
+            aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
+            aruco_params = cv2.aruco.DetectorParameters()
+            self.aruco_detector = cv2.aruco.ArucoDetector(aruco_dict, aruco_params)
+        except Exception:
+            self.aruco_detector = None
 
     def get_model_metadata(self) -> Dict[str, Any]:
         """Reports honest model identity, feature dimensions, and matcher types."""
@@ -115,10 +121,23 @@ class RegionVerifier:
 
         # 4. ArUco / QR tag check
         tag_matched = True
-        if tag_id is not None and detected_tag_id is not None:
-            if detected_tag_id != tag_id:
-                tag_matched = False
-                fused_score = min(fused_score, 0.3) # Penalize mismatch
+        actual_detected_tag = detected_tag_id
+        if tag_id is not None:
+            if actual_detected_tag is None and self.aruco_detector is not None:
+                try:
+                    gray_crop = cv2.cvtColor(live_crop_bgr, cv2.COLOR_BGR2GRAY)
+                    corners, ids, _ = self.aruco_detector.detectMarkers(gray_crop)
+                    if ids is not None and len(ids) > 0:
+                        actual_detected_tag = int(ids[0][0])
+                except Exception:
+                    actual_detected_tag = None
+
+            if actual_detected_tag is not None:
+                if actual_detected_tag != tag_id:
+                    tag_matched = False
+                    fused_score = min(fused_score, 0.2)  # Severe penalty for swapped tag!
+                else:
+                    tag_matched = True
 
         # 5. Empty-region baseline match (for positive-evidence MISSING)
         empty_match = 0.0

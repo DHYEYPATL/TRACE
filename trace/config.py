@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 def _env_subst(match: re.Match) -> str:
@@ -132,6 +132,17 @@ class AppConfig(BaseModel):
         profile_key = self.profile if self.profile in self.half_lives_s else "demo"
         class_table = self.half_lives_s.get(profile_key, {})
         return class_table.get(asset_class, class_table.get("other", 25.0))
+
+    @model_validator(mode="after")
+    def validate_production_security(self) -> AppConfig:
+        if self.profile == "production":
+            if not self.security.require_auth:
+                raise ValueError("Production configuration MUST require authentication (security.require_auth=true).")
+            if self.security.admin_token in ("trace-admin-secret-key", "", None):
+                raise ValueError("Production configuration cannot use default or empty admin_token. Set TRACE_ADMIN_TOKEN.")
+            if self.security.demo_mode:
+                raise ValueError("Production configuration cannot have demo_mode enabled.")
+        return self
 
 
 def load_config(config_path: str = "config/demo.yaml") -> AppConfig:

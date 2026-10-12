@@ -63,10 +63,12 @@ class LedgerManager:
         self,
         db: sqlite3.Connection,
         event: Dict[str, Any],
-        crop_hashes: Optional[Dict[str, str]] = None
+        crop_hashes: Optional[Dict[str, str]] = None,
+        commit: bool = True,
     ) -> Dict[str, Any]:
         """
         Appends an event to the ledger with SHA-256 hash chaining and Ed25519 signature.
+        Supports atomic caller transactions when commit=False.
         """
         if crop_hashes is None:
             crop_hashes = {}
@@ -92,7 +94,8 @@ class LedgerManager:
             "INSERT INTO ledger (body, hash, sig) VALUES (?, ?, ?)",
             (body_bytes.decode("utf-8"), h, sig_hex),
         )
-        db.commit()
+        if commit:
+            db.commit()
 
         return {
             "idx": next_idx,

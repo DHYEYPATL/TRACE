@@ -86,12 +86,13 @@ class NaivePixelDiffBaseline:
                 if self.since[asset_id] is None:
                     self.since[asset_id] = timestamp
                 elif timestamp - self.since[asset_id] >= self.hold_s:
-                    alerts.append({
-                        "asset_id": asset_id,
-                        "type": "ALARM_THEFT",
-                        "timestamp": timestamp,
-                        "reason": f"Pixel difference {diff:.1f} > {self.diff_threshold}",
-                    })
+                    if getattr(self, "_prev_state", {}).get(asset_id) != "ALARM_THEFT":
+                        alerts.append({
+                            "asset_id": asset_id,
+                            "type": "ALARM_THEFT",
+                            "timestamp": timestamp,
+                            "reason": f"Pixel difference {diff:.1f} > {self.diff_threshold}",
+                        })
                     states[asset_id] = "ALARM_THEFT"
                 else:
                     states[asset_id] = "SUSPECTED_CHANGE"
@@ -99,6 +100,9 @@ class NaivePixelDiffBaseline:
                 self.since[asset_id] = None
                 states[asset_id] = "SAFE"
 
+        if not hasattr(self, "_prev_state"):
+            self._prev_state = {}
+        self._prev_state.update(states)
         return {"alerts": alerts, "states": states}
 
 
@@ -162,16 +166,20 @@ class TemporalVotingBaseline:
                 self.votes[asset_id] = max(0, self.votes[asset_id] - 1)
 
             if self.votes[asset_id] >= self.required_votes:
-                alerts.append({
-                    "asset_id": asset_id,
-                    "type": "ALARM_THEFT",
-                    "timestamp": timestamp,
-                    "reason": f"Sustained pixel difference for {self.votes[asset_id]} frames",
-                })
+                if getattr(self, "_prev_state", {}).get(asset_id) != "ALARM_THEFT":
+                    alerts.append({
+                        "asset_id": asset_id,
+                        "type": "ALARM_THEFT",
+                        "timestamp": timestamp,
+                        "reason": f"Sustained pixel difference for {self.votes[asset_id]} frames",
+                    })
                 states[asset_id] = "ALARM_THEFT"
             else:
                 states[asset_id] = "SAFE"
 
+        if not hasattr(self, "_prev_state"):
+            self._prev_state = {}
+        self._prev_state.update(states)
         return {"alerts": alerts, "states": states}
 
 
@@ -234,12 +242,13 @@ class DescriptorVerificationBaseline:
                 if self.since[asset_id] is None:
                     self.since[asset_id] = timestamp
                 elif timestamp - self.since[asset_id] >= self.hold_s:
-                    alerts.append({
-                        "asset_id": asset_id,
-                        "type": "MISSING",
-                        "timestamp": timestamp,
-                        "reason": f"Descriptor similarity {top_sim:.3f} < {self.sim_threshold}",
-                    })
+                    if getattr(self, "_prev_state", {}).get(asset_id) != "MISSING":
+                        alerts.append({
+                            "asset_id": asset_id,
+                            "type": "MISSING",
+                            "timestamp": timestamp,
+                            "reason": f"Descriptor similarity {top_sim:.3f} < {self.sim_threshold}",
+                        })
                     states[asset_id] = "MISSING"
                 else:
                     states[asset_id] = "SUSPECTED_CHANGE"
@@ -247,6 +256,9 @@ class DescriptorVerificationBaseline:
                 self.since[asset_id] = None
                 states[asset_id] = "SAFE"
 
+        if not hasattr(self, "_prev_state"):
+            self._prev_state = {}
+        self._prev_state.update(states)
         return {"alerts": alerts, "states": states}
 
 
@@ -330,14 +342,16 @@ class FullTraceEvaluator:
         camera_ok = health_res["ok"] and not health_res["is_offline"]
 
         if not camera_ok or frame_bgr is None:
-            # Report camera health alerts if offline or obstructed
+            # Report camera health alerts if offline or obstructed (only on state transition)
             cam_state = "CAMERA_OBSTRUCTED" if health_res.get("is_obstructed") else "SYSTEM_OFFLINE"
-            alerts.append({
-                "asset_id": "camera",
-                "type": cam_state,
-                "timestamp": timestamp,
-                "reason": health_res.get("reason", "Camera health failure"),
-            })
+            if getattr(self, "_prev_cam_state", None) != cam_state:
+                self._prev_cam_state = cam_state
+                alerts.append({
+                    "asset_id": "camera",
+                    "type": cam_state,
+                    "timestamp": timestamp,
+                    "reason": health_res.get("reason", "Camera health failure"),
+                })
             for asset_id in self.assets:
                 # Step FSM with camera_ok=False
                 obs = Obs(
@@ -352,17 +366,24 @@ class FullTraceEvaluator:
                 states[asset_id] = fsm_state
             return {"alerts": alerts, "states": states, "camera_ok": False, "camera_status": cam_state}
 
+        self._prev_cam_state = None
+
         # 2. Alignment & Tampering
         align_res = self.aligner.align_frame(frame_bgr)
         is_cam_tampered = align_res.get("is_tampered", False)
 
         if is_cam_tampered:
-            alerts.append({
-                "asset_id": "camera",
-                "type": "CAMERA_TAMPERED",
-                "timestamp": timestamp,
-                "reason": f"Displacement {align_res.get('shift_px', 0)}px exceeds threshold",
-            })
+            if not getattr(self, "_prev_tampered", False):
+                self._prev_tampered = True
+                alerts.append({
+                    "asset_id": "camera",
+                    "type": "CAMERA_TAMPERED",
+                    "timestamp": timestamp,
+                    "reason": f"Displacement {align_res.get('shift_px', 0)}px exceeds threshold",
+                })
+        else:
+            self._prev_tampered = False
+
 
         # 3. People segmentation
         person_mask = self.people_segmenter.segment(frame_bgr)
@@ -394,8 +415,8 @@ class FullTraceEvaluator:
                 empty_roi_bgr=data["empty_roi"],
             )
 
-            # Drift & relocation calculation
-            _, drift_frac = self.verifier.calculate_centroid_drift(aligned_region, data["region"])
+            # Genuine asset displacement calculation
+            drift_frac = 0.0
             found_elsewhere = False
 
             if ver_res["present_score"] < 0.70:
@@ -407,11 +428,8 @@ class FullTraceEvaluator:
                 )
                 if found_elsewhere and found_bbox is not None:
                     bx, by, bw, bh = found_bbox
-                    new_cx, new_cy = bx + bw / 2.0, by + bh / 2.0
-                    base_cx, base_cy = rx + rw / 2.0, ry + rh / 2.0
-                    drift_px = math.hypot(new_cx - base_cx, new_cy - base_cy)
-                    diag = max(1.0, math.hypot(rw, rh))
-                    drift_frac = max(drift_frac, drift_px / diag)
+                    obs_region = [[bx, by], [bx + bw, by], [bx + bw, by + bh], [bx, by + bh]]
+                    _, drift_frac = self.verifier.calculate_centroid_drift(obs_region, data["region"])
 
             obs = Obs(
                 t=timestamp,

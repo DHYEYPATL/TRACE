@@ -6,14 +6,28 @@ Maintains a dedicated thread and drops old frames to guarantee real-time latency
 
 from __future__ import annotations
 
+import datetime
 import logging
 import threading
 import time
+from dataclasses import dataclass
 from typing import Optional, Tuple
 import cv2
 import numpy as np
 
 logger = logging.getLogger("trace.capture")
+
+
+@dataclass
+class FrameEnvelope:
+    """Structured immutable frame envelope with high-precision monotonic timing."""
+    camera_id: str
+    frame_id: int
+    captured_at_utc: datetime.datetime
+    captured_monotonic_ns: int
+    image_bgr: np.ndarray
+    source_status: str  # "HEALTHY", "STALE", "DISCONNECTED"
+    is_new: bool = True
 
 
 def generate_synthetic_branch_frame(frame_idx: int, width: int = 1280, height: int = 720) -> np.ndarray:
@@ -104,20 +118,31 @@ def generate_synthetic_branch_frame(frame_idx: int, width: int = 1280, height: i
 class FrameCapture:
     """
     Threaded capture reader. Supports synthetic generation, webcam index, file, or RTSP.
-    Always maintains the latest frame, dropping intermediate stale frames.
+    Enforces genuine frame delivery: never silently switches real cameras to synthetic footage,
+    tracks monotonic reception timestamps, and flags stale or disconnected frames.
     """
 
-    def __init__(self, source_uri: str = "synthetic", width: int = 1280, height: int = 720, target_fps: int = 15):
+    def __init__(
+        self,
+        source_uri: str = "synthetic",
+        width: int = 1280,
+        height: int = 720,
+        target_fps: int = 15,
+        allow_synthetic_fallback: bool = False
+    ):
         self.source_uri = source_uri
         self.width = width
         self.height = height
         self.target_fps = target_fps
+        self.allow_synthetic_fallback = allow_synthetic_fallback
 
         self.cap: Optional[cv2.VideoCapture] = None
         self.latest_frame: Optional[np.ndarray] = None
         self.last_frame_time: float = 0.0
+        self.last_frame_received_mono: float = 0.0
         self.frame_counter: int = 0
         self.is_running: bool = False
+        self.is_connected: bool = False
         self.is_synthetic: bool = (source_uri == "synthetic" or source_uri.startswith("synth"))
         self._lock = threading.Lock()
         self._thread: Optional[threading.Thread] = None
@@ -129,8 +154,12 @@ class FrameCapture:
         if not self.is_synthetic:
             # Parse webcam:N or file:... or rtsp://...
             if self.source_uri.startswith("webcam:"):
-                dev_idx = int(self.source_uri.split(":")[1])
-                self.cap = cv2.VideoCapture(dev_idx, cv2.CAP_DSHOW)
+                try:
+                    dev_idx = int(self.source_uri.split(":")[1])
+                    self.cap = cv2.VideoCapture(dev_idx, cv2.CAP_DSHOW)
+                except Exception as e:
+                    logger.error(f"Invalid webcam index in '{self.source_uri}': {e}")
+                    self.cap = None
             elif self.source_uri.startswith("file:"):
                 file_path = self.source_uri.replace("file:", "")
                 self.cap = cv2.VideoCapture(file_path)
@@ -140,10 +169,16 @@ class FrameCapture:
             if self.cap and self.cap.isOpened():
                 self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
                 self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-                logger.info(f"Connected to camera feed: {self.source_uri}")
+                self.is_connected = True
+                logger.info(f"Connected to genuine camera source: {self.source_uri}")
             else:
-                logger.warning(f"Could not open '{self.source_uri}'. Falling back to synthetic branch feed.")
-                self.is_synthetic = True
+                self.is_connected = False
+                if not self.allow_synthetic_fallback:
+                    logger.error(f"Camera connection failed for '{self.source_uri}'. Silent synthetic fallback is DISABLED.")
+                    raise RuntimeError(f"Unable to open configured camera feed '{self.source_uri}'. Check connection and permissions.")
+                else:
+                    logger.warning(f"DEMO MODE: Could not open '{self.source_uri}'. Explicitly permitted fallback to synthetic stream.")
+                    self.is_synthetic = True
 
         self.is_running = True
         self._thread = threading.Thread(target=self._capture_loop, daemon=True)
@@ -157,18 +192,23 @@ class FrameCapture:
 
             if self.is_synthetic:
                 frame = generate_synthetic_branch_frame(self.frame_counter, self.width, self.height)
+                self.is_connected = True
             elif self.cap and self.cap.isOpened():
                 ret, grabbed = self.cap.read()
-                if ret:
+                if ret and grabbed is not None:
                     frame = grabbed
+                    self.is_connected = True
                 else:
-                    # Loop video or reconnect
-                    self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    self.is_connected = False
+                    # For video files, loop playback
+                    if self.source_uri.startswith("file:"):
+                        self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
             if frame is not None:
                 with self._lock:
                     self.latest_frame = frame
                     self.last_frame_time = time.time()
+                    self.last_frame_received_mono = time.monotonic()
                     self.frame_counter += 1
 
             elapsed = time.time() - t0
@@ -176,17 +216,66 @@ class FrameCapture:
             if sleep_time > 0:
                 time.sleep(sleep_time)
 
+    def wait_for_first_frame(self, timeout_sec: float = 5.0) -> Optional[np.ndarray]:
+        """Blocks until the first valid frame arrives or timeout occurs."""
+        start_mono = time.monotonic()
+        while (time.monotonic() - start_mono) < timeout_sec:
+            success, frame, _ = self.read_latest()
+            if success and frame is not None:
+                return frame
+            time.sleep(0.05)
+        return None
+
     def read_latest(self) -> Tuple[bool, Optional[np.ndarray], float]:
         """
         Returns (success, frame_bgr, timestamp).
         Non-blocking read of the freshest frame.
+        Detects frame stalls and never produces synthetic images for real camera feeds.
         """
         with self._lock:
+            if self.is_synthetic:
+                if self.latest_frame is None:
+                    self.latest_frame = generate_synthetic_branch_frame(0, self.width, self.height)
+                    self.last_frame_time = time.time()
+                    self.last_frame_received_mono = time.monotonic()
+                return True, self.latest_frame.copy(), self.last_frame_time
+
+            # Real camera stream
             if self.latest_frame is None:
-                # Generate initial synthetic frame if not yet captured
-                self.latest_frame = generate_synthetic_branch_frame(0, self.width, self.height)
-                self.last_frame_time = time.time()
+                return False, None, 0.0
+
+            # Monotonic staleness check: if no frame received for > 2.0s, signal failure
+            if (time.monotonic() - self.last_frame_received_mono) > 2.0:
+                return False, self.latest_frame.copy(), self.last_frame_time
+
             return True, self.latest_frame.copy(), self.last_frame_time
+
+    def read_envelope(self, camera_id: str = "cam-1") -> Tuple[bool, Optional[FrameEnvelope]]:
+        """
+        Returns (success, FrameEnvelope).
+        Enforces frame deduplication so re-reading the same cached frame returns is_new=False.
+        """
+        with self._lock:
+            success, frame, ts = self.read_latest()
+            if not success or frame is None:
+                return False, None
+
+            now_mono_ns = time.monotonic_ns()
+            now_utc = datetime.datetime.now(datetime.timezone.utc)
+            fid = self.frame_counter
+            is_new = (fid != getattr(self, "_last_delivered_fid", -1))
+            self._last_delivered_fid = fid
+
+            env = FrameEnvelope(
+                camera_id=camera_id,
+                frame_id=fid,
+                captured_at_utc=now_utc,
+                captured_monotonic_ns=now_mono_ns,
+                image_bgr=frame,
+                source_status="HEALTHY" if success else "STALE",
+                is_new=is_new,
+            )
+            return True, env
 
     def stop(self) -> None:
         self.is_running = False
@@ -195,4 +284,5 @@ class FrameCapture:
         if self.cap:
             self.cap.release()
             self.cap = None
+        self.is_connected = False
         logger.info("Frame capture stopped.")

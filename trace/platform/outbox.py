@@ -39,7 +39,7 @@ class OutboxManager:
         """Toggles network connectivity for simulation and testing."""
         self.network_connected = connected
 
-    def enqueue(self, event_id: str, payload_json: str) -> None:
+    def enqueue(self, event_id: str, payload_json: str, commit: bool = True) -> None:
         """Stores an event into the outbox for guaranteed delivery."""
         now = time.time()
         self.db.execute(
@@ -49,7 +49,19 @@ class OutboxManager:
             """,
             (event_id, payload_json, now),
         )
-        self.db.commit()
+        if commit:
+            self.db.commit()
+
+    def enqueue_conn(self, conn: sqlite3.Connection, event_id: str, payload_json: str) -> None:
+        """Appends to the outbox queue within an external caller transaction (does not commit)."""
+        now = time.time()
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO outbox (event_id, payload_json, created_at, status)
+            VALUES (?, ?, ?, 'PENDING')
+            """,
+            (event_id, payload_json, now),
+        )
 
     def get_pending_count(self) -> int:
         cur = self.db.cursor()

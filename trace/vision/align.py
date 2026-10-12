@@ -140,14 +140,33 @@ class FrameAligner:
             "landmark_ratio": self.inlier_ratio
         }
 
+    def warp_to_reference(self, frame_bgr: np.ndarray) -> np.ndarray:
+        """
+        Warps the current frame into the canonical reference coordinate system
+        using the estimated homography (mapping current -> reference).
+        """
+        if self.ref_frame_gray is None or self.current_homography is None or self.is_tampered:
+            return frame_bgr
+        if self.mean_shift_px < 3.0:
+            return frame_bgr
+        h, w = self.ref_frame_gray.shape[:2]
+        try:
+            return cv2.warpPerspective(frame_bgr, self.current_homography, (w, h), flags=cv2.INTER_LINEAR)
+        except Exception:
+            return frame_bgr
+
     def transform_polygon(self, polygon: List[List[int]]) -> List[List[int]]:
-        """Warps region polygon according to camera drift homography."""
+        """
+        Maps reference-frame polygon into current-frame coordinates using inverse homography.
+        """
         if self.mean_shift_px < 3.0 or self.is_tampered or self.current_homography is None:
             return polygon
 
         pts = np.float32(polygon).reshape(-1, 1, 2)
         try:
-            warped = cv2.perspectiveTransform(pts, self.current_homography)
+            # self.current_homography maps current -> reference; its inverse maps reference -> current
+            H_inv = np.linalg.inv(self.current_homography)
+            warped = cv2.perspectiveTransform(pts, H_inv)
             return [[int(round(p[0][0])), int(round(p[0][1]))] for p in warped]
         except Exception:
             return polygon

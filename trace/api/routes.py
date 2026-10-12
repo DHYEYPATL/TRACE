@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 import cv2
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -55,19 +55,40 @@ class ActionRequest(BaseModel):
     note: str = ""
 
 
+ALLOWED_EVENT_TYPES = {
+    "MOVED", "MISSING", "SWAPPED", "NEW_OBJECT", "SAFE",
+    "OCCLUDED", "RETURNED", "CAMERA_OBSTRUCTED", "CAMERA_OFFLINE",
+    "CAMERA_TAMPERED", "UNKNOWN"
+}
+
+
+class IngestEventRequest(BaseModel):
+    id: Optional[str] = None
+    asset_id: str
+    camera_id: str = "cam-1"
+    type: str = "UNKNOWN"
+    severity: str = "medium"
+    confidence: float = Field(ge=0.0, le=1.0, default=1.0)
+    detected_at: Optional[float] = None
+    incident_id: Optional[str] = None
+    evidence: Optional[Dict[str, Any]] = None
+    details: Optional[Dict[str, Any]] = None
+
+
 def get_auth_role(request: Request, pipeline: TracePipeline) -> str:
-    """Extracts and validates credentials from Authorization header or X-API-Key."""
+    """
+    Extracts and validates credentials from Authorization header or X-API-Key.
+    Query-string token transmission is strictly disallowed to prevent exposure in logs.
+    Unauthenticated callers receive 'viewer' role when require_auth=False; never 'admin'.
+    """
     auth_header = request.headers.get("Authorization")
     api_key_header = request.headers.get("X-API-Key")
-    query_token = request.query_params.get("token")
 
     token = None
     if auth_header and auth_header.startswith("Bearer "):
         token = auth_header[7:].strip()
     elif api_key_header:
         token = api_key_header.strip()
-    elif query_token:
-        token = query_token.strip()
 
     sec = pipeline.cfg.security
     if token:
@@ -81,9 +102,13 @@ def get_auth_role(request: Request, pipeline: TracePipeline) -> str:
             raise HTTPException(status_code=401, detail="Invalid authentication token")
 
     if sec.require_auth:
-        raise HTTPException(status_code=401, detail="Authentication required: missing token")
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required: missing token in Authorization or X-API-Key header"
+        )
 
-    return "admin"
+    # When authentication is not strictly required (demo/local mode), default to viewer (read-only)
+    return "viewer"
 
 
 def check_permission(request: Request, pipeline: TracePipeline, min_role: str = "viewer") -> str:
@@ -122,14 +147,23 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
 
     pipeline.alert_router.register_ws_callback(_on_alert_callback)
 
-    # Mount static assets and evidence directories
+    # Mount static assets
     static_dir = Path(__file__).parent / "static"
     static_dir.mkdir(parents=True, exist_ok=True)
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
-    evidence_dir = Path("data/evidence")
-    evidence_dir.mkdir(parents=True, exist_ok=True)
-    app.mount("/evidence", StaticFiles(directory=str(evidence_dir)), name="evidence")
+    # Secure Evidence Retrieval (requires viewer authorization and prevents directory traversal)
+    @app.get("/api/evidence/{date_str}/{event_id}/{filename}")
+    @app.get("/evidence/{date_str}/{event_id}/{filename}")
+    def get_evidence_file(date_str: str, event_id: str, filename: str, request: Request):
+        check_permission(request, pipeline, min_role="viewer")
+        base_dir = Path("data/evidence").resolve()
+        target_path = (base_dir / date_str / event_id / filename).resolve()
+        if not str(target_path).startswith(str(base_dir)):
+            raise HTTPException(status_code=403, detail="Access denied")
+        if not target_path.is_file():
+            raise HTTPException(status_code=404, detail="Evidence file not found")
+        return FileResponse(str(target_path))
 
     # Serve main Dashboard HTML at root
     @app.get("/", response_class=HTMLResponse)
@@ -202,13 +236,29 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
         pipeline.baseline_medians[asset_id] = crop
         pipeline.baseline_variants[asset_id] = pipeline.verifier.extractor.generate_variants(crop)
 
+        # Persist new accepted baseline to disk and SQLite so it survives restarts
+        baselines_dir = Path("data/baselines")
+        baselines_dir.mkdir(parents=True, exist_ok=True)
+        img_path = baselines_dir / f"{asset_id}_accepted_{int(time.time())}.jpg"
+        cv2.imwrite(str(img_path), crop)
+
+        with pipeline.db_mgr.get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO baselines (id, asset_id, kind, image_path, created_at)
+                VALUES (?, ?, 'median', ?, ?)
+                """,
+                (f"base-{asset_id}-{int(time.time())}", asset_id, str(img_path).replace("\\", "/"), time.time())
+            )
+            conn.commit()
+
         # Reset FSM
         fsm = pipeline.fsms.get(asset_id)
         if fsm:
             fsm.state = pipeline.fsms[asset_id].cfg and pipeline.fsms[asset_id].state.__class__.SAFE
             fsm.doubt_engine.reset_sighted(time.time())
 
-        return {"ok": True, "asset_id": asset_id, "message": "New baseline accepted."}
+        return {"ok": True, "asset_id": asset_id, "message": "New baseline accepted and persisted."}
 
     @app.post("/api/assets/{asset_id}/baseline")
     def capture_baseline(asset_id: str, kind: str = "median", request: Request = None):
@@ -316,30 +366,38 @@ def create_app(pipeline: TracePipeline) -> FastAPI:
 
     # Ingest API (Edge-to-Server idempotent sync, Section 7.3)
     @app.post("/api/ingest/events")
-    def ingest_event(event: Dict[str, Any]):
-        """Idempotent event ingest from edge nodes."""
-        ev_id = event.get("id") or str(uuid.uuid4())
+    def ingest_event(req: IngestEventRequest, request: Request):
+        """Idempotent event ingest from edge nodes with strict schema and RBAC enforcement."""
+        check_permission(request, pipeline, min_role="operator")
+        if req.type not in ALLOWED_EVENT_TYPES:
+            raise HTTPException(status_code=400, detail=f"Invalid event type '{req.type}'")
+
+        ev_id = req.id or str(uuid.uuid4())
         with pipeline.db_mgr.get_connection() as conn:
             cur = conn.execute("SELECT id FROM events WHERE id = ?", (ev_id,))
             if cur.fetchone():
                 return {"ok": True, "status": "DUPLICATE_IGNORED", "id": ev_id}
 
             now = time.time()
-            dt = event.get("detected_at", now)
+            dt = req.detected_at if req.detected_at is not None else now
+            ev_meta = req.evidence or {}
+            event_payload = req.model_dump()
+            event_payload["source"] = "EXTERNAL_INGEST"
+
             conn.execute(
                 """
                 INSERT INTO events (
                     id, asset_id, camera_id, type, severity, confidence, status,
                     detected_at, received_at, before_path, after_path, payload_json, incident_id
-                ) VALUES (?, ?, ?, ?, ?, ?, 'NEW', ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, 'INGESTED', ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    ev_id, event.get("asset_id", "unknown"), event.get("camera_id", "cam-1"),
-                    event.get("type", "UNKNOWN"), event.get("severity", "medium"),
-                    event.get("confidence", 1.0), dt, now,
-                    event.get("evidence", {}).get("before"),
-                    event.get("evidence", {}).get("after"),
-                    json.dumps(event), event.get("incident_id")
+                    ev_id, req.asset_id, req.camera_id,
+                    req.type, req.severity,
+                    req.confidence, dt, now,
+                    ev_meta.get("before"),
+                    ev_meta.get("after"),
+                    json.dumps(event_payload), req.incident_id
                 )
             )
             conn.commit()

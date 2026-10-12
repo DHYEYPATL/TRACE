@@ -76,11 +76,15 @@ class NewObjectDetector:
         for bx, by, bw, bh in current_detected_blobs:
             bcx, bcy = bx + bw / 2.0, by + bh / 2.0
             matched_key = None
+            best_dist_sq = 60.0 ** 2
             for key, data in self.blob_tracker.items():
+                if key in matched_keys:
+                    continue
                 tcx, tcy = data["centroid"]
-                if (bcx - tcx) ** 2 + (bcy - tcy) ** 2 < 60 ** 2:
+                dist_sq = (bcx - tcx) ** 2 + (bcy - tcy) ** 2
+                if dist_sq < best_dist_sq:
+                    best_dist_sq = dist_sq
                     matched_key = key
-                    break
 
             if matched_key:
                 data = self.blob_tracker[matched_key]
@@ -91,11 +95,15 @@ class NewObjectDetector:
 
                 # Has it persisted for >= persistence_s?
                 if (now - data["first_seen"]) >= self.persistence_s:
+                    is_new = not data.get("alert_dispatched", False)
+                    data["status"] = "CONFIRMED"
+                    data["alert_dispatched"] = True
                     active_new_objects.append({
                         "id": matched_key,
                         "bbox": (bx, by, bw, bh),
                         "persistence_s": round(now - data["first_seen"], 1),
                         "first_seen": data["first_seen"],
+                        "is_new_confirmation": is_new,
                     })
             else:
                 new_key = f"new-obj-{self.next_blob_id}"
@@ -105,11 +113,13 @@ class NewObjectDetector:
                     "bbox": (bx, by, bw, bh),
                     "first_seen": now,
                     "last_seen": now,
+                    "status": "TRACKED",
+                    "alert_dispatched": False,
                 }
                 matched_keys.add(new_key)
 
-        # Evict old blobs not seen in last 2 seconds
-        stale_keys = [k for k, v in self.blob_tracker.items() if (now - v["last_seen"]) > 2.0]
+        # Evict old blobs not seen in last 3.0 seconds
+        stale_keys = [k for k, v in self.blob_tracker.items() if (now - v["last_seen"]) > 3.0]
         for k in stale_keys:
             del self.blob_tracker[k]
 

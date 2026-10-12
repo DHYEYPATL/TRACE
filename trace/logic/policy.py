@@ -27,9 +27,13 @@ class PolicyEngine:
         self.alert_history: Dict[Tuple[str, str], Dict[str, Any]] = {}
 
     def is_business_hours(self, dt: Optional[datetime.datetime] = None) -> bool:
-        """Determines if the current moment falls within configured branch business hours."""
+        """Determines if the current moment falls within configured branch business hours (Asia/Kolkata)."""
         if dt is None:
-            dt = datetime.datetime.now()
+            try:
+                from zoneinfo import ZoneInfo
+                dt = datetime.datetime.now(ZoneInfo("Asia/Kolkata"))
+            except Exception:
+                dt = datetime.datetime.now()
 
         day_abbr = dt.strftime("%a")
         if day_abbr not in self.bh_cfg.days:

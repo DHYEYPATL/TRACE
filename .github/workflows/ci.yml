@@ -34,7 +34,8 @@ jobs:
 
       - name: Code Quality & Linting (Ruff)
         run: |
-          ruff check . --ignore E501,F401,F841 || true
+          ruff check . --ignore E501,F401,F841
+
 
       - name: Run Core Test Suite (Unit, Invariants, Security, DB, Ledger)
         run: |

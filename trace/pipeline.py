@@ -159,15 +159,28 @@ class TracePipeline:
         # Seed few-shot state classifier with mock safe door open/closed samples
         self.state_classifier.seed_default_branch_samples("safe-02")
 
-        # Capture initial synthetic reference frame
-        _, init_frame, _ = self.capture.read_latest()
-        if init_frame is not None:
-            self._capture_initial_baselines(init_frame)
+        # Load any existing persisted baselines from disk/db to survive restarts
+        with self.db_mgr.get_connection() as conn:
+            for asset_id in self.assets.keys():
+                cur = conn.execute(
+                    "SELECT image_path FROM baselines WHERE asset_id = ? AND kind = 'median' ORDER BY created_at DESC LIMIT 1",
+                    (asset_id,)
+                )
+                row = cur.fetchone()
+                if row and Path(row[0]).exists():
+                    crop = cv2.imread(row[0])
+                    if crop is not None and crop.size > 0:
+                        self.baseline_medians[asset_id] = crop
+                        self.baseline_variants[asset_id] = self.verifier.extractor.generate_variants(crop)
+                        self.empty_rois[asset_id] = np.full_like(crop, 160)
 
     def _capture_initial_baselines(self, frame_bgr: np.ndarray) -> None:
         """Extracts initial median baselines and Visual DNA variants from reference frame."""
         self.aligner.register_reference(frame_bgr)
         self.health_monitor.calibrate_baseline(frame_bgr)
+
+        baselines_dir = Path("data/baselines")
+        baselines_dir.mkdir(parents=True, exist_ok=True)
 
         for asset_id, a in self.assets.items():
             if not a.region or len(a.region) < 3:
@@ -186,11 +199,39 @@ class TracePipeline:
             empty_crop = np.full_like(crop, 160)
             self.empty_rois[asset_id] = empty_crop
 
+            # Persist to disk and baselines table in SQLite
+            img_path = baselines_dir / f"{asset_id}_init_median.jpg"
+            cv2.imwrite(str(img_path), crop)
+
+            with self.db_mgr.get_connection() as conn:
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO baselines (
+                        id, asset_id, kind, image_path, created_at
+                    ) VALUES (?, ?, 'median', ?, ?)
+                    """,
+                    (f"base-{asset_id}-init", asset_id, str(img_path).replace("\\", "/"), time.time())
+                )
+                conn.commit()
+
     def start(self) -> None:
         """Starts the capture and processing pipeline."""
         if self.is_running:
             return
         self.capture.start()
+
+        # Wait for the first genuine frame from the active camera source
+        ok, init_frame, _ = self.capture.wait_for_first_frame(timeout_sec=5.0)
+        if ok and init_frame is not None:
+            self._capture_initial_baselines(init_frame)
+            logger.info("Calibrated initial baselines from live camera frame.")
+        else:
+            logger.warning("Camera failed to deliver valid initial frame. Marking camera OFFLINE.")
+            with self.db_mgr.get_connection() as conn:
+                for cam in self.cfg.cameras:
+                    conn.execute("UPDATE cameras SET status = 'OFFLINE' WHERE id = ?", (cam.id,))
+                conn.commit()
+
         self.is_running = True
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
@@ -254,7 +295,8 @@ class TracePipeline:
                     injected_frame, person_mask, reg_polys, timestamp=now
                 )
                 for no in new_objs:
-                    self._handle_new_object(no, injected_frame, person_mask, now)
+                    if no.get("is_new_confirmation", False):
+                        self._handle_new_object(no, injected_frame, person_mask, now)
 
                 # 7. Flush outbox store-and-forward queue
                 self.outbox.flush()
@@ -271,6 +313,13 @@ class TracePipeline:
                     if dt > 0:
                         self.current_fps = 0.9 * self.current_fps + 0.1 * (1.0 / dt)
                     t_last = time.time()
+            else:
+                # Camera feed unavailable, stalled, or disconnected: record offline state
+                self.health_monitor.check(None, capture_t)
+                with self.db_mgr.get_connection() as conn:
+                    for cam in self.cfg.cameras:
+                        conn.execute("UPDATE cameras SET status = 'OFFLINE' WHERE id = ?", (cam.id,))
+                    conn.commit()
 
             # Maintain target cadence
             elapsed = time.time() - t_start
@@ -327,27 +376,32 @@ class TracePipeline:
             tag_id=asset_cfg.tag_id,
         )
 
-        # Drift calculation
-        _, drift_frac = self.verifier.calculate_centroid_drift(aligned_region, raw_region)
-
-        # State change prediction (e.g. Safe door open/closed)
-        state_label, state_conf = self.state_classifier.predict(asset_id, live_crop)
-
-        # Relocator scan: if absent from ROI or drifting, scan the rest of the frame
+        # Asset localization and physical displacement
         found_elsewhere = False
-        if base_median is not None and (ver_res["present_score"] < asset_cfg.thresholds.present or drift_frac > asset_cfg.thresholds.move_frac):
-            found_elsewhere, _, _ = self.relocator.search(
+        asset_displacement_frac = 0.0
+        relocated_score = 0.0
+
+        # When presence in expected region drops, search wider frame to distinguish relocation from missing
+        if base_median is not None and ver_res["present_score"] < asset_cfg.thresholds.present:
+            found_elsewhere, relocated_bbox, relocated_score = self.relocator.search(
                 frame_bgr=frame_bgr,
                 template_crop_bgr=base_median,
                 exclude_zone=asset_cfg.zone or raw_region,
                 person_mask=person_mask,
             )
+            if found_elsewhere and relocated_bbox is not None:
+                bx, by, bw, bh = relocated_bbox
+                obs_region = [[bx, by], [bx + bw, by], [bx + bw, by + bh], [bx, by + bh]]
+                _, asset_displacement_frac = self.verifier.calculate_centroid_drift(obs_region, raw_region)
 
-        # Build Observation
+        # State change prediction (e.g. Safe door open/closed)
+        state_label, state_conf = self.state_classifier.predict(asset_id, live_crop)
+
+        # Build Observation with genuine asset displacement
         obs = Obs(
             t=timestamp,
             present_score=ver_res["present_score"],
-            drift_frac=drift_frac,
+            drift_frac=asset_displacement_frac,
             visibility=visibility,
             empty_match=ver_res["empty_match"],
             camera_ok=camera_ok and not is_cam_tampered,
@@ -361,6 +415,16 @@ class TracePipeline:
         prev_state = fsm.state.value
         new_state = fsm.step(obs).value
 
+        # Calculate event-specific confidence (distinct from generic presence score)
+        if new_state == "MOVED":
+            event_confidence = max(0.75, float(relocated_score))
+        elif new_state == "MISSING":
+            event_confidence = round(float(min(1.0, (1.0 - ver_res["present_score"]) * visibility)), 2)
+        elif new_state == "SWAPPED":
+            event_confidence = 0.95
+        else:
+            event_confidence = ver_res["present_score"]
+
         # Update database `states` table
         with self.db_mgr.get_connection() as conn:
             conn.execute(
@@ -369,7 +433,7 @@ class TracePipeline:
                 SET state = ?, belief = ?, confidence = ?, last_verified_at = ?, updated_at = ?
                 WHERE asset_id = ?
                 """,
-                (new_state, fsm.belief, ver_res["present_score"], timestamp, timestamp, asset_id)
+                (new_state, fsm.belief, event_confidence, timestamp, timestamp, asset_id)
             )
             conn.commit()
 
@@ -380,9 +444,9 @@ class TracePipeline:
                 asset_cfg=asset_cfg,
                 prev_state=prev_state,
                 new_state=new_state,
-                confidence=ver_res["present_score"],
+                confidence=event_confidence,
                 details={
-                    "drift_frac": round(drift_frac, 3),
+                    "drift_frac": round(asset_displacement_frac, 3),
                     "threshold": asset_cfg.thresholds.move_frac,
                     "visibility": round(visibility, 2),
                     "empty_match": round(ver_res["empty_match"], 2),
@@ -428,12 +492,13 @@ class TracePipeline:
         event_id = str(uuid.uuid4())
         incident_id = policy_res.get("incident_id") or str(uuid.uuid4())
 
-        # Save masked before/after evidence crops
+        # Save masked before/after evidence crops with fail-closed privacy redaction
         ev_meta, crop_hashes = self.evidence_writer.save_crops(
             event_id=event_id,
             before_crop=base_crop,
             after_crop=live_crop,
-            after_mask=person_mask_crop,
+            before_mask=person_mask_crop if self.cfg.privacy.mask_people else None,
+            after_mask=person_mask_crop if self.cfg.privacy.mask_people else None,
             person_masked=self.cfg.privacy.mask_people,
         )
 
@@ -451,51 +516,54 @@ class TracePipeline:
             "details": details,
         }
 
-        # Append to immutable signed cryptographic ledger
+        # Atomically commit ledger append, incidents, events, and outbox enqueue in one transaction
         with self.db_mgr.get_connection() as conn:
-            ledger_info = self.ledger_mgr.append(
-                db=conn,
-                event=event_payload,
-                crop_hashes=crop_hashes,
-            )
-            event_payload["ledger"] = ledger_info
+            try:
+                ledger_info = self.ledger_mgr.append(
+                    db=conn,
+                    event=event_payload,
+                    crop_hashes=crop_hashes,
+                    commit=False,
+                )
+                event_payload["ledger"] = ledger_info
 
-            # Insert into incidents table if new incident
-            if not policy_res.get("is_repeat"):
+                if not policy_res.get("is_repeat"):
+                    conn.execute(
+                        """
+                        INSERT INTO incidents (id, asset_id, opened_at, status, counter)
+                        VALUES (?, ?, ?, 'OPEN', 1)
+                        """,
+                        (incident_id, asset_id, timestamp)
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE incidents SET counter = counter + 1 WHERE id = ?",
+                        (incident_id,)
+                    )
+
+                initial_status = "NEEDS_REVIEW" if policy_res.get("tier") == "NEEDS_REVIEW" else "NEW"
+
                 conn.execute(
                     """
-                    INSERT INTO incidents (id, asset_id, opened_at, status, counter)
-                    VALUES (?, ?, ?, 'OPEN', 1)
+                    INSERT INTO events (
+                        id, asset_id, camera_id, type, severity, confidence, status,
+                        detected_at, received_at, before_path, after_path, payload_json, incident_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (incident_id, asset_id, timestamp)
-                )
-            else:
-                conn.execute(
-                    "UPDATE incidents SET counter = counter + 1 WHERE id = ?",
-                    (incident_id,)
+                    (
+                        event_id, asset_id, asset_cfg.camera_id, new_state, severity, confidence,
+                        initial_status, timestamp, timestamp, ev_meta["before"], ev_meta["after"],
+                        json.dumps(event_payload), incident_id
+                    )
                 )
 
-            # Status governed by selective prediction band (Auto-alert vs Needs Review)
-            initial_status = "NEEDS_REVIEW" if policy_res.get("tier") == "NEEDS_REVIEW" else "NEW"
-
-            # Insert into events table
-            conn.execute(
-                """
-                INSERT INTO events (
-                    id, asset_id, camera_id, type, severity, confidence, status,
-                    detected_at, received_at, before_path, after_path, payload_json, incident_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    event_id, asset_id, asset_cfg.camera_id, new_state, severity, confidence,
-                    initial_status, timestamp, timestamp, ev_meta["before"], ev_meta["after"],
-                    json.dumps(event_payload), incident_id
-                )
-            )
-            conn.commit()
-
-        # Queue into outbox for store-and-forward reliability
-        self.outbox.enqueue(event_id, json.dumps(event_payload))
+                # Atomically enqueue into outbox queue
+                self.outbox.enqueue_conn(conn, event_id, json.dumps(event_payload))
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                logger.error(f"Atomic alert persistence failed for {event_id}: {e}")
+                raise
 
         # Record for deduplication
         self.policy_engine.record_alert_dispatched(asset_id, new_state, incident_id, timestamp)

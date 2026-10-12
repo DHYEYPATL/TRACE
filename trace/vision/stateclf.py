@@ -48,13 +48,17 @@ class StateClassifier:
 
         # Sort descending by similarity
         similarities.sort(key=lambda x: x[0], reverse=True)
+
+        # Enforce minimum similarity: reject unfamiliar inputs instead of forcing a label
+        if not similarities or similarities[0][0] < 0.60:
+            return "UNKNOWN", 0.0
+
         top_k = similarities[: min(self.k, len(similarities))]
 
         # Tally weighted votes
         vote_weights: Dict[str, float] = {}
         total_w = 0.0
         for sim, label in top_k:
-            # Softmax or rectified weight
             w = max(0.001, (sim + 1.0) / 2.0)
             vote_weights[label] = vote_weights.get(label, 0.0) + w
             total_w += w

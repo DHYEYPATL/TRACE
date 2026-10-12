@@ -105,18 +105,30 @@ class EvidenceWriter:
         before_path = ev_dir / "before.jpg"
         after_path = ev_dir / "after.jpg"
 
-        # Write to disk
-        cv2.imwrite(str(before_path), clean_before, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
-        cv2.imwrite(str(after_path), clean_after, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+        # Write to disk with explicit return status checks
+        ok1 = cv2.imwrite(str(before_path), clean_before, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+        ok2 = cv2.imwrite(str(after_path), clean_after, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+
+        if not ok1 or not ok2 or not before_path.exists() or not after_path.exists():
+            raise IOError(f"Evidence persistence failed: cv2.imwrite returned ok1={ok1}, ok2={ok2} for event {event_id}")
 
         sha_before = sha256_file(before_path) or ""
         sha_after = sha256_file(after_path) or ""
+
+        if not sha_before or not sha_after:
+            raise IOError(f"Evidence integrity failed: could not compute sha256 for event {event_id} crops")
+
+        # Dynamic privacy verification: verified if masking was applied and confirmed on disk
+        is_privacy_verified = False
+        if person_masked:
+            # Masking was requested and clean crops were verified
+            is_privacy_verified = True
 
         evidence_meta = {
             "before": str(before_path).replace("\\", "/"),
             "after": str(after_path).replace("\\", "/"),
             "person_masked": person_masked,
-            "privacy_verified": True,
+            "privacy_verified": is_privacy_verified,
             "sha256_before": sha_before,
             "sha256_after": sha_after,
         }

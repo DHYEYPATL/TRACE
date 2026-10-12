@@ -1,92 +1,1085 @@
 {
-  "dataset_version": "2.0.0-real-cv",
-  "evaluation_timestamp": "2026-10-12 06:00:54 UTC",
-  "clip_count": 10,
-  "total_camera_duration_s": 83.0,
-  "models": {
+  "benchmark_type": "Synthetic Multi-Scenario Regression Suite",
+  "timestamp_utc": "2026-10-12 06:52:39 UTC",
+  "total_clips": 10,
+  "total_frames": 415,
+  "monitored_duration_s": 83.0,
+  "ablation_results": {
     "1. Naive Pixel Diff": {
       "model_name": "1. Naive Pixel Diff",
       "tp": 4,
-      "fp": 2,
+      "fp": 9,
       "fn": 3,
       "tn": 8,
-      "precision": 0.6667,
-      "precision_ci": "[30.0%, 90.3%]",
+      "precision": 0.3077,
+      "precision_ci": "[12.7%, 57.6%]",
       "recall": 0.5714,
       "recall_ci": "[25.1%, 84.2%]",
-      "f1": 0.6154,
-      "false_alarms": 2,
-      "fp_per_hour": 86.75,
+      "f1": 0.4,
+      "false_alarms": 9,
+      "fp_per_hour": 390.36,
       "latency_stats": {
         "p50": 1600.0,
         "p95": 1685.0,
         "max": 1700.0,
         "mean": 1625.0
       },
-      "camera_hours": 0.0231
+      "camera_hours": 0.0231,
+      "category_stats": {
+        "STABLE": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "tn": 7
+        },
+        "MOVED": {
+          "tp": 2,
+          "fp": 0,
+          "fn": 0,
+          "tn": 0
+        },
+        "MISSING": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0,
+          "tn": 0
+        },
+        "OCCLUDED": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "tn": 1
+        },
+        "CAMERA_OBSTRUCTED": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "tn": 0
+        },
+        "ALARM_THEFT": {
+          "tp": 0,
+          "fp": 9,
+          "fn": 0,
+          "tn": 0
+        },
+        "CAMERA_OFFLINE": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "tn": 0
+        },
+        "CAMERA_TAMPERED": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "tn": 0
+        },
+        "SWAPPED": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0,
+          "tn": 0
+        }
+      },
+      "details": [
+        {
+          "clip": "clip_stable",
+          "event": "STABLE",
+          "asset": "safe-02",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_stable",
+          "event": "STABLE",
+          "asset": "printer-01",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_stable",
+          "event": "STABLE",
+          "asset": "laptop-03",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_move",
+          "event": "MOVED",
+          "asset": "safe-02",
+          "status": "TP",
+          "pred_type": "ALARM_THEFT",
+          "latency_ms": 1700.0
+        },
+        {
+          "clip": "clip_move",
+          "event": "STABLE",
+          "asset": "printer-01",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_missing",
+          "event": "MISSING",
+          "asset": "printer-01",
+          "status": "TP",
+          "pred_type": "ALARM_THEFT",
+          "latency_ms": 1600.0
+        },
+        {
+          "clip": "clip_missing",
+          "event": "STABLE",
+          "asset": "safe-02",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_occlusion",
+          "event": "OCCLUDED",
+          "asset": "safe-02",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_occlusion",
+          "event": "STABLE",
+          "asset": "safe-02",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_obstruction",
+          "event": "CAMERA_OBSTRUCTED",
+          "asset": "camera",
+          "status": "FN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_obstruction",
+          "event": "UNEXPECTED_ALARM_THEFT",
+          "asset": "safe-02",
+          "status": "FP",
+          "pred_type": "ALARM_THEFT",
+          "timestamp": 3.2
+        },
+        {
+          "clip": "clip_obstruction",
+          "event": "UNEXPECTED_ALARM_THEFT",
+          "asset": "printer-01",
+          "status": "FP",
+          "pred_type": "ALARM_THEFT",
+          "timestamp": 3.2
+        },
+        {
+          "clip": "clip_obstruction",
+          "event": "UNEXPECTED_ALARM_THEFT",
+          "asset": "laptop-03",
+          "status": "FP",
+          "pred_type": "ALARM_THEFT",
+          "timestamp": 3.2
+        },
+        {
+          "clip": "clip_offline_freeze",
+          "event": "CAMERA_OFFLINE",
+          "asset": "camera",
+          "status": "FN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_camera_shift",
+          "event": "CAMERA_TAMPERED",
+          "asset": "camera",
+          "status": "FN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_camera_shift",
+          "event": "UNEXPECTED_ALARM_THEFT",
+          "asset": "safe-02",
+          "status": "FP",
+          "pred_type": "ALARM_THEFT",
+          "timestamp": 3.0
+        },
+        {
+          "clip": "clip_camera_shift",
+          "event": "UNEXPECTED_ALARM_THEFT",
+          "asset": "printer-01",
+          "status": "FP",
+          "pred_type": "ALARM_THEFT",
+          "timestamp": 3.0
+        },
+        {
+          "clip": "clip_camera_shift",
+          "event": "UNEXPECTED_ALARM_THEFT",
+          "asset": "laptop-03",
+          "status": "FP",
+          "pred_type": "ALARM_THEFT",
+          "timestamp": 3.0
+        },
+        {
+          "clip": "clip_lighting_drop",
+          "event": "UNEXPECTED_ALARM_THEFT",
+          "asset": "safe-02",
+          "status": "FP",
+          "pred_type": "ALARM_THEFT",
+          "timestamp": 3.2
+        },
+        {
+          "clip": "clip_lighting_drop",
+          "event": "UNEXPECTED_ALARM_THEFT",
+          "asset": "printer-01",
+          "status": "FP",
+          "pred_type": "ALARM_THEFT",
+          "timestamp": 3.2
+        },
+        {
+          "clip": "clip_lighting_drop",
+          "event": "UNEXPECTED_ALARM_THEFT",
+          "asset": "laptop-03",
+          "status": "FP",
+          "pred_type": "ALARM_THEFT",
+          "timestamp": 3.2
+        },
+        {
+          "clip": "clip_swap_lookalike",
+          "event": "SWAPPED",
+          "asset": "laptop-03",
+          "status": "TP",
+          "pred_type": "ALARM_THEFT",
+          "latency_ms": 1600.0
+        },
+        {
+          "clip": "clip_recovery",
+          "event": "MOVED",
+          "asset": "safe-02",
+          "status": "TP",
+          "pred_type": "ALARM_THEFT",
+          "latency_ms": 1600.0
+        },
+        {
+          "clip": "clip_recovery",
+          "event": "STABLE",
+          "asset": "safe-02",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        }
+      ]
     },
     "2. + Temporal Voting": {
       "model_name": "2. + Temporal Voting",
       "tp": 4,
-      "fp": 2,
+      "fp": 9,
       "fn": 3,
       "tn": 8,
-      "precision": 0.6667,
-      "precision_ci": "[30.0%, 90.3%]",
+      "precision": 0.3077,
+      "precision_ci": "[12.7%, 57.6%]",
       "recall": 0.5714,
       "recall_ci": "[25.1%, 84.2%]",
-      "f1": 0.6154,
-      "false_alarms": 2,
-      "fp_per_hour": 86.75,
+      "f1": 0.4,
+      "false_alarms": 9,
+      "fp_per_hour": 390.36,
       "latency_stats": {
         "p50": 800.0,
         "p95": 885.0,
         "max": 900.0,
         "mean": 825.0
       },
-      "camera_hours": 0.0231
+      "camera_hours": 0.0231,
+      "category_stats": {
+        "STABLE": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "tn": 7
+        },
+        "MOVED": {
+          "tp": 2,
+          "fp": 0,
+          "fn": 0,
+          "tn": 0
+        },
+        "MISSING": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0,
+          "tn": 0
+        },
+        "OCCLUDED": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "tn": 1
+        },
+        "CAMERA_OBSTRUCTED": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "tn": 0
+        },
+        "ALARM_THEFT": {
+          "tp": 0,
+          "fp": 9,
+          "fn": 0,
+          "tn": 0
+        },
+        "CAMERA_OFFLINE": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "tn": 0
+        },
+        "CAMERA_TAMPERED": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "tn": 0
+        },
+        "SWAPPED": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0,
+          "tn": 0
+        }
+      },
+      "details": [
+        {
+          "clip": "clip_stable",
+          "event": "STABLE",
+          "asset": "safe-02",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_stable",
+          "event": "STABLE",
+          "asset": "printer-01",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_stable",
+          "event": "STABLE",
+          "asset": "laptop-03",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_move",
+          "event": "MOVED",
+          "asset": "safe-02",
+          "status": "TP",
+          "pred_type": "ALARM_THEFT",
+          "latency_ms": 900.0
+        },
+        {
+          "clip": "clip_move",
+          "event": "STABLE",
+          "asset": "printer-01",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_missing",
+          "event": "MISSING",
+          "asset": "printer-01",
+          "status": "TP",
+          "pred_type": "ALARM_THEFT",
+          "latency_ms": 800.0
+        },
+        {
+          "clip": "clip_missing",
+          "event": "STABLE",
+          "asset": "safe-02",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_occlusion",
+          "event": "OCCLUDED",
+          "asset": "safe-02",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_occlusion",
+          "event": "STABLE",
+          "asset": "safe-02",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_obstruction",
+          "event": "CAMERA_OBSTRUCTED",
+          "asset": "camera",
+          "status": "FN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_obstruction",
+          "event": "UNEXPECTED_ALARM_THEFT",
+          "asset": "safe-02",
+          "status": "FP",
+          "pred_type": "ALARM_THEFT",
+          "timestamp": 2.4000000000000004
+        },
+        {
+          "clip": "clip_obstruction",
+          "event": "UNEXPECTED_ALARM_THEFT",
+          "asset": "printer-01",
+          "status": "FP",
+          "pred_type": "ALARM_THEFT",
+          "timestamp": 2.4000000000000004
+        },
+        {
+          "clip": "clip_obstruction",
+          "event": "UNEXPECTED_ALARM_THEFT",
+          "asset": "laptop-03",
+          "status": "FP",
+          "pred_type": "ALARM_THEFT",
+          "timestamp": 2.4000000000000004
+        },
+        {
+          "clip": "clip_offline_freeze",
+          "event": "CAMERA_OFFLINE",
+          "asset": "camera",
+          "status": "FN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_camera_shift",
+          "event": "CAMERA_TAMPERED",
+          "asset": "camera",
+          "status": "FN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_camera_shift",
+          "event": "UNEXPECTED_ALARM_THEFT",
+          "asset": "safe-02",
+          "status": "FP",
+          "pred_type": "ALARM_THEFT",
+          "timestamp": 2.2
+        },
+        {
+          "clip": "clip_camera_shift",
+          "event": "UNEXPECTED_ALARM_THEFT",
+          "asset": "printer-01",
+          "status": "FP",
+          "pred_type": "ALARM_THEFT",
+          "timestamp": 2.2
+        },
+        {
+          "clip": "clip_camera_shift",
+          "event": "UNEXPECTED_ALARM_THEFT",
+          "asset": "laptop-03",
+          "status": "FP",
+          "pred_type": "ALARM_THEFT",
+          "timestamp": 2.2
+        },
+        {
+          "clip": "clip_lighting_drop",
+          "event": "UNEXPECTED_ALARM_THEFT",
+          "asset": "safe-02",
+          "status": "FP",
+          "pred_type": "ALARM_THEFT",
+          "timestamp": 2.4000000000000004
+        },
+        {
+          "clip": "clip_lighting_drop",
+          "event": "UNEXPECTED_ALARM_THEFT",
+          "asset": "printer-01",
+          "status": "FP",
+          "pred_type": "ALARM_THEFT",
+          "timestamp": 2.4000000000000004
+        },
+        {
+          "clip": "clip_lighting_drop",
+          "event": "UNEXPECTED_ALARM_THEFT",
+          "asset": "laptop-03",
+          "status": "FP",
+          "pred_type": "ALARM_THEFT",
+          "timestamp": 2.4000000000000004
+        },
+        {
+          "clip": "clip_swap_lookalike",
+          "event": "SWAPPED",
+          "asset": "laptop-03",
+          "status": "TP",
+          "pred_type": "ALARM_THEFT",
+          "latency_ms": 800.0
+        },
+        {
+          "clip": "clip_recovery",
+          "event": "MOVED",
+          "asset": "safe-02",
+          "status": "TP",
+          "pred_type": "ALARM_THEFT",
+          "latency_ms": 800.0
+        },
+        {
+          "clip": "clip_recovery",
+          "event": "STABLE",
+          "asset": "safe-02",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        }
+      ]
     },
     "3. + LabSobel Descriptor": {
       "model_name": "3. + LabSobel Descriptor",
-      "tp": 4,
-      "fp": 1,
-      "fn": 3,
+      "tp": 1,
+      "fp": 10,
+      "fn": 6,
       "tn": 9,
-      "precision": 0.8,
-      "precision_ci": "[37.5%, 96.4%]",
-      "recall": 0.5714,
-      "recall_ci": "[25.1%, 84.2%]",
-      "f1": 0.6666,
-      "false_alarms": 1,
-      "fp_per_hour": 43.37,
+      "precision": 0.0909,
+      "precision_ci": "[1.6%, 37.7%]",
+      "recall": 0.1429,
+      "recall_ci": "[2.6%, 51.3%]",
+      "f1": 0.1111,
+      "false_alarms": 10,
+      "fp_per_hour": 433.73,
       "latency_stats": {
         "p50": 1600.0,
-        "p95": 1685.0,
-        "max": 1700.0,
-        "mean": 1625.0
+        "p95": 1600.0,
+        "max": 1600.0,
+        "mean": 1600.0
       },
-      "camera_hours": 0.0231
+      "camera_hours": 0.0231,
+      "category_stats": {
+        "STABLE": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "tn": 7
+        },
+        "MOVED": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 2,
+          "tn": 0
+        },
+        "MISSING": {
+          "tp": 1,
+          "fp": 10,
+          "fn": 0,
+          "tn": 0
+        },
+        "CAMERA_OBSTRUCTED": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "tn": 0
+        },
+        "CAMERA_OFFLINE": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "tn": 0
+        },
+        "CAMERA_TAMPERED": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "tn": 0
+        },
+        "LIGHTING_CHANGE": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "tn": 2
+        },
+        "SWAPPED": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "tn": 0
+        }
+      },
+      "details": [
+        {
+          "clip": "clip_stable",
+          "event": "STABLE",
+          "asset": "safe-02",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_stable",
+          "event": "STABLE",
+          "asset": "printer-01",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_stable",
+          "event": "STABLE",
+          "asset": "laptop-03",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_move",
+          "event": "MOVED",
+          "asset": "safe-02",
+          "status": "FN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_move",
+          "event": "STABLE",
+          "asset": "printer-01",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_move",
+          "event": "UNEXPECTED_MISSING",
+          "asset": "safe-02",
+          "status": "FP",
+          "pred_type": "MISSING",
+          "timestamp": 3.2
+        },
+        {
+          "clip": "clip_missing",
+          "event": "MISSING",
+          "asset": "printer-01",
+          "status": "TP",
+          "pred_type": "MISSING",
+          "latency_ms": 1600.0
+        },
+        {
+          "clip": "clip_missing",
+          "event": "STABLE",
+          "asset": "safe-02",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_occlusion",
+          "event": "STABLE",
+          "asset": "safe-02",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_occlusion",
+          "event": "UNEXPECTED_MISSING",
+          "asset": "safe-02",
+          "status": "FP",
+          "pred_type": "MISSING",
+          "timestamp": 3.2
+        },
+        {
+          "clip": "clip_obstruction",
+          "event": "CAMERA_OBSTRUCTED",
+          "asset": "camera",
+          "status": "FN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_obstruction",
+          "event": "UNEXPECTED_MISSING",
+          "asset": "safe-02",
+          "status": "FP",
+          "pred_type": "MISSING",
+          "timestamp": 3.2
+        },
+        {
+          "clip": "clip_obstruction",
+          "event": "UNEXPECTED_MISSING",
+          "asset": "printer-01",
+          "status": "FP",
+          "pred_type": "MISSING",
+          "timestamp": 3.2
+        },
+        {
+          "clip": "clip_obstruction",
+          "event": "UNEXPECTED_MISSING",
+          "asset": "laptop-03",
+          "status": "FP",
+          "pred_type": "MISSING",
+          "timestamp": 3.2
+        },
+        {
+          "clip": "clip_offline_freeze",
+          "event": "CAMERA_OFFLINE",
+          "asset": "camera",
+          "status": "FN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_camera_shift",
+          "event": "CAMERA_TAMPERED",
+          "asset": "camera",
+          "status": "FN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_camera_shift",
+          "event": "UNEXPECTED_MISSING",
+          "asset": "safe-02",
+          "status": "FP",
+          "pred_type": "MISSING",
+          "timestamp": 3.0
+        },
+        {
+          "clip": "clip_camera_shift",
+          "event": "UNEXPECTED_MISSING",
+          "asset": "printer-01",
+          "status": "FP",
+          "pred_type": "MISSING",
+          "timestamp": 3.0
+        },
+        {
+          "clip": "clip_camera_shift",
+          "event": "UNEXPECTED_MISSING",
+          "asset": "laptop-03",
+          "status": "FP",
+          "pred_type": "MISSING",
+          "timestamp": 3.0
+        },
+        {
+          "clip": "clip_lighting_drop",
+          "event": "LIGHTING_CHANGE",
+          "asset": "safe-02",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_lighting_drop",
+          "event": "LIGHTING_CHANGE",
+          "asset": "printer-01",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_swap_lookalike",
+          "event": "SWAPPED",
+          "asset": "laptop-03",
+          "status": "FN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_swap_lookalike",
+          "event": "UNEXPECTED_MISSING",
+          "asset": "laptop-03",
+          "status": "FP",
+          "pred_type": "MISSING",
+          "timestamp": 2.8000000000000003
+        },
+        {
+          "clip": "clip_recovery",
+          "event": "MOVED",
+          "asset": "safe-02",
+          "status": "FN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_recovery",
+          "event": "STABLE",
+          "asset": "safe-02",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_recovery",
+          "event": "UNEXPECTED_MISSING",
+          "asset": "safe-02",
+          "status": "FP",
+          "pred_type": "MISSING",
+          "timestamp": 2.8000000000000003
+        }
+      ]
     },
     "4. Full TRACE Engine": {
       "model_name": "4. Full TRACE Engine",
       "tp": 7,
-      "fp": 0,
+      "fp": 4,
       "fn": 0,
       "tn": 10,
-      "precision": 1.0,
-      "precision_ci": "[64.6%, 100.0%]",
+      "precision": 0.6364,
+      "precision_ci": "[35.4%, 84.8%]",
       "recall": 1.0,
       "recall_ci": "[64.6%, 100.0%]",
-      "f1": 1.0,
-      "false_alarms": 0,
-      "fp_per_hour": 0.0,
+      "f1": 0.7778,
+      "false_alarms": 4,
+      "fp_per_hour": 173.49,
       "latency_stats": {
-        "p50": 800.0,
+        "p50": 900.0,
         "p95": 4400.0,
         "max": 5000.0,
-        "mean": 1435.71
+        "mean": 1657.14
       },
-      "camera_hours": 0.0231
+      "camera_hours": 0.0231,
+      "category_stats": {
+        "STABLE": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "tn": 7
+        },
+        "MOVED": {
+          "tp": 2,
+          "fp": 0,
+          "fn": 0,
+          "tn": 0
+        },
+        "SWAPPED": {
+          "tp": 1,
+          "fp": 1,
+          "fn": 0,
+          "tn": 0
+        },
+        "MISSING": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0,
+          "tn": 0
+        },
+        "OCCLUDED": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "tn": 1
+        },
+        "CAMERA_OBSTRUCTED": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0,
+          "tn": 0
+        },
+        "CAMERA_TAMPERED": {
+          "tp": 1,
+          "fp": 1,
+          "fn": 0,
+          "tn": 0
+        },
+        "SYSTEM_OFFLINE": {
+          "tp": 0,
+          "fp": 2,
+          "fn": 0,
+          "tn": 0
+        },
+        "CAMERA_OFFLINE": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0,
+          "tn": 0
+        },
+        "LIGHTING_CHANGE": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "tn": 2
+        }
+      },
+      "details": [
+        {
+          "clip": "clip_stable",
+          "event": "STABLE",
+          "asset": "safe-02",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_stable",
+          "event": "STABLE",
+          "asset": "printer-01",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_stable",
+          "event": "STABLE",
+          "asset": "laptop-03",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_move",
+          "event": "MOVED",
+          "asset": "safe-02",
+          "status": "TP",
+          "pred_type": "MOVED",
+          "latency_ms": 900.0
+        },
+        {
+          "clip": "clip_move",
+          "event": "STABLE",
+          "asset": "printer-01",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_move",
+          "event": "UNEXPECTED_SWAPPED",
+          "asset": "safe-02",
+          "status": "FP",
+          "pred_type": "SWAPPED",
+          "timestamp": 4.6000000000000005
+        },
+        {
+          "clip": "clip_missing",
+          "event": "MISSING",
+          "asset": "printer-01",
+          "status": "TP",
+          "pred_type": "MISSING",
+          "latency_ms": 5000.0
+        },
+        {
+          "clip": "clip_missing",
+          "event": "STABLE",
+          "asset": "safe-02",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_occlusion",
+          "event": "OCCLUDED",
+          "asset": "safe-02",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_occlusion",
+          "event": "STABLE",
+          "asset": "safe-02",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_obstruction",
+          "event": "CAMERA_OBSTRUCTED",
+          "asset": "camera",
+          "status": "TP",
+          "pred_type": "CAMERA_OBSTRUCTED",
+          "latency_ms": 1700.0
+        },
+        {
+          "clip": "clip_obstruction",
+          "event": "UNEXPECTED_CAMERA_TAMPERED",
+          "asset": "camera",
+          "status": "FP",
+          "pred_type": "CAMERA_TAMPERED",
+          "timestamp": 1.6
+        },
+        {
+          "clip": "clip_obstruction",
+          "event": "UNEXPECTED_SYSTEM_OFFLINE",
+          "asset": "camera",
+          "status": "FP",
+          "pred_type": "SYSTEM_OFFLINE",
+          "timestamp": 3.8000000000000003
+        },
+        {
+          "clip": "clip_offline_freeze",
+          "event": "CAMERA_OFFLINE",
+          "asset": "camera",
+          "status": "TP",
+          "pred_type": "SYSTEM_OFFLINE",
+          "latency_ms": 200.0
+        },
+        {
+          "clip": "clip_camera_shift",
+          "event": "CAMERA_TAMPERED",
+          "asset": "camera",
+          "status": "TP",
+          "pred_type": "CAMERA_TAMPERED",
+          "latency_ms": 0.0
+        },
+        {
+          "clip": "clip_camera_shift",
+          "event": "UNEXPECTED_SYSTEM_OFFLINE",
+          "asset": "camera",
+          "status": "FP",
+          "pred_type": "SYSTEM_OFFLINE",
+          "timestamp": 3.6
+        },
+        {
+          "clip": "clip_lighting_drop",
+          "event": "LIGHTING_CHANGE",
+          "asset": "safe-02",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_lighting_drop",
+          "event": "LIGHTING_CHANGE",
+          "asset": "printer-01",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        },
+        {
+          "clip": "clip_swap_lookalike",
+          "event": "SWAPPED",
+          "asset": "laptop-03",
+          "status": "TP",
+          "pred_type": "SWAPPED",
+          "latency_ms": 3000.0
+        },
+        {
+          "clip": "clip_recovery",
+          "event": "MOVED",
+          "asset": "safe-02",
+          "status": "TP",
+          "pred_type": "MOVED",
+          "latency_ms": 800.0
+        },
+        {
+          "clip": "clip_recovery",
+          "event": "STABLE",
+          "asset": "safe-02",
+          "status": "TN",
+          "pred_type": null,
+          "latency_ms": null
+        }
+      ]
     }
   }
 }
