@@ -1,0 +1,50 @@
+AssetWatch AI — Enterprise Build v1.0
+
+Build date: 2026-10-14
+Python: 3.13.3 (64-bit)
+GPU: NVIDIA GeForce RTX 3050 Ti Laptop GPU (CUDA 12.8)
+PyTorch: 2.11.0+cu128  |  Ultralytics: 8.4.177  |  OpenCV-contrib: 4.11.0.86
+
+Offline checks performed:
+  pytest: 39 passed (0 failed)
+    - Identity cache lifecycle, enrichment gates, plausible-location checks
+    - Monitoring mode (always/day/office/night)
+    - Hard delete (asset + events + crop files)
+    - Settings persistence (SQLite settings table)
+    - Gallery max = 10
+    - Silent vs non-silent profile update (enrichment writes no event)
+    - SQLite persistence / status transitions / archive
+    - Conservative appearance matching, ambiguous tie rejection
+    - Camera-health gating for missing alerts
+
+Features included in this build:
+  - Multi-view gallery (up to 10 samples per asset, up from 5)
+  - Online gallery enrichment (auto-learns new angles at confidence >= 0.85)
+  - Partial-view adaptive weighting (low-area detections shift weight to colour + spatial)
+  - Two-stage matching: rolling short-term buffer (priority) + persistent gallery
+  - Spatial prior (Gaussian decay from last known position)
+  - Long-term identity cache (IdentityState per asset, survives track-ID recycling)
+  - Recovery detection with "↩ Recovered" badge and cyan bounding box
+  - CSRT → YOLO promotion when AI detection overlaps manual tracker with score >= 0.70
+  - Hard delete endpoint: POST /api/delete/<id> (removes asset, events, crop files)
+  - Monitoring modes: always / day / office / night (idle drops to 2 fps)
+  - Mode persistence in SQLite settings table, restored on restart
+  - Intro / onboarding modal (shown once, dismissable, ? button to re-open)
+  - Coverage meter on each asset card (gallery size / 10, colour-coded)
+  - Trash button (hard delete) + Archive button (soft delete) per asset
+  - Monitoring mode toggle in top bar
+  - IDLE badge when running in low-power mode
+  - Sharpness score on extracted features (used for enrichment quality gate)
+  - Compact JPEG thumbnails (max 160px side, Q=75) to save disk
+  - Gallery max of 3 on-disk reference crops per asset (rest enriched in SQLite)
+  - Event types: REGISTERED, MOVED, MISSING, CHECKING, PRESENT, RECOVERED,
+                 PROMOTED, TRACKER_LOST, TRACKER_INIT_FAILED, REFERENCE_ADDED,
+                 ARCHIVED
+  - Updated check_setup.py: validates identity layer + monitoring mode + unit tests
+
+Not run in build environment:
+  - Live Flask server / browser integration
+  - Physical USB camera capture / CSRT tracker
+  - YOLO + ResNet18 first-time weight download
+
+Run setup and validation on the target laptop per docs/REAL_WORLD_VALIDATION.md.

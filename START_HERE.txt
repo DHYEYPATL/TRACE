@@ -1,0 +1,13 @@
+ASSETWATCH AI — QUICK START (WINDOWS)
+
+1) Extract this folder to a writable location.
+2) Plug in your USB webcam.
+3) Double-click Setup-AssetWatch.bat and wait for setup to finish.
+4) Double-click Run-AssetWatch.bat.
+5) Open http://127.0.0.1:5055 in your browser.
+6) Select the camera index that shows the USB webcam (try 1 if index 0 is the laptop camera).
+7) Click a detected object, or click-drag a rectangle around an arbitrary item.
+8) Enter its name and click Register selected item.
+9) Register each same-class physical item separately. Add reference views for difficult objects.
+
+First startup downloads pretrained model weights; internet access is needed once. CUDA is used when a compatible NVIDIA GPU/driver and PyTorch CUDA build are available; otherwise it runs on CPU. See README.md for limits, tuning and a physical validation checklist.

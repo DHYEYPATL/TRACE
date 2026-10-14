@@ -1,36 +1,39 @@
-# Byte-compiled / optimized files
+# Python virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Python bytecode and caches
 __pycache__/
 *.py[cod]
 *$py.class
-
-# Testing & Linting
 .pytest_cache/
-.coverage
-htmlcov/
 
-# Environments & Config secrets
+# Runtime and local state
+*.log
 .env
-.venv/
-venv/
-env/
+data/*
+!data/.gitkeep
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
 
-# IDE & OS
+# Pretrained model weights (auto-downloaded at runtime; do not track)
+*.pt
+*.pth
+*.onnx
+*.bin
+*.engine
+*.weights
+*.tflite
+yolo11n.pt
+
+# OS and IDE files
 .DS_Store
 Thumbs.db
 .idea/
 .vscode/
 
-# Local database, cryptographic keys, and runtime artifacts
-data/*.db
-data/*.db-shm
-data/*.db-wal
-data/*.log
-data/signing_key.hex
-data/evidence/*
-!data/evidence/.gitkeep
-data/recordings/*
-!data/recordings/.gitkeep
-
-# Preserve required directory structures & static assets
-!data/aruco_stickers/
-!data/baselines/
+# Temporary / cloned dirs
+temp_trace/

@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>AssetWatch AI · Visual asset monitoring</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body>
+
+<!-- ===================== INTRO MODAL ===================== -->
+<div id="intro-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="intro-title">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="brand-mark" style="width:32px;height:32px;font-size:11px">AW</div>
+      <h2 id="intro-title">Welcome to AssetWatch AI</h2>
+      <button class="modal-close" id="intro-close" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="intro-steps">
+        <div class="intro-step"><span class="intro-num">1</span><div><strong>Register objects once</strong><p>Click a detected amber box, or drag a selection around any object. Give it a name and hit Register.</p></div></div>
+        <div class="intro-step"><span class="intro-num">2</span><div><strong>Add 4–6 reference angles</strong><p>For reliable tracking, use "Add reference view" to capture front, ±45°, side, and slight top-down. Watch the coverage meter fill up.</p></div></div>
+        <div class="intro-step"><span class="intro-num">3</span><div><strong>Colour codes</strong><p><span class="legend-dot green" style="display:inline-block"></span> Green = registered &nbsp; <span class="legend-dot amber" style="display:inline-block"></span> Amber = detected, not registered &nbsp; <span class="legend-dot purple" style="display:inline-block"></span> Purple = manual tracker &nbsp; <span style="color:#00bcd4">Cyan</span> = just recovered</p></div></div>
+        <div class="intro-step"><span class="intro-num">4</span><div><strong>Alerts</strong><p>CHECKING after 3 s absence · MISSING after 25 s · MOVED when displaced. Camera disconnection suspends all alerts.</p></div></div>
+        <div class="intro-step"><span class="intro-num">5</span><div><strong>Monitoring modes</strong><p>Always / Day / Office / Night — switch in the top bar to save GPU heat at night.</p></div></div>
+        <div class="intro-step"><span class="intro-num">6</span><div><strong>Gallery auto-learning</strong><p>The system automatically adds new high-quality angles to each asset's gallery while it is tracked with high confidence.</p></div></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <label class="check-label"><input type="checkbox" id="intro-dont-show"> Don't show again</label>
+      <button class="btn btn-primary" id="intro-ok">Got it</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== MAIN APP ===================== -->
+<div class="app-shell">
+  <header class="topbar">
+    <div class="brand-mark">AW</div>
+    <div class="brand-copy">
+      <div class="brand-name">AssetWatch <span>AI</span></div>
+      <div class="brand-sub">VISUAL ASSET MONITORING · LOCAL-FIRST</div>
+    </div>
+    <div class="top-status">
+      <span id="camera-dot" class="status-dot"></span>
+      <span id="camera-status">Connecting to camera</span>
+    </div>
+    <!-- Monitoring mode toggle -->
+    <div class="mode-pick">
+      <select id="mode-select" title="Monitoring mode">
+        <option value="always">⚡ Always on</option>
+        <option value="day">☀️ Day only</option>
+        <option value="office">🏢 Office hours</option>
+        <option value="night">🌙 Night (idle)</option>
+      </select>
+    </div>
+    <div id="idle-badge" class="idle-badge hidden">IDLE</div>
+    <button id="enable-alerts" class="btn btn-quiet">Enable alerts</button>
+    <button id="show-help" class="btn btn-quiet" title="Show guide">?</button>
+  </header>
+
+  <main>
+    <section class="hero-row">
+      <div>
+        <div class="eyebrow">LIVE WORKSPACE</div>
+        <h1>Keep eyes on what matters.</h1>
+        <p class="subtitle">Detect objects automatically. Register individual items once. Get a warning when a tracked item moves or goes missing.</p>
+      </div>
+      <div class="camera-pick">
+        <label for="camera-index">USB camera</label>
+        <div class="camera-pick-row">
+          <select id="camera-index">
+            <option value="0">Camera 0 (laptop)</option>
+            <option value="1" selected>Camera 1 (USB webcam)</option>
+            <option value="2">Camera 2</option>
+            <option value="3">Camera 3</option>
+            <option value="4">Camera 4</option>
+            <option value="5">Camera 5</option>
+          </select>
+          <button id="switch-camera" class="btn btn-secondary">Reconnect</button>
+        </div>
+        <div class="microcopy">USB webcam is usually index 1. Try 0 if laptop cam opens.</div>
+      </div>
+    </section>
+
+    <section class="metrics-grid">
+      <article class="metric-card">
+        <div class="metric-label">CAMERA FPS</div>
+        <div class="metric-value" id="capture-fps">—</div>
+        <div class="metric-foot">Live feed</div>
+      </article>
+      <article class="metric-card">
+        <div class="metric-label">AI INFERENCE</div>
+        <div class="metric-value" id="infer-fps">—</div>
+        <div class="metric-foot"><span id="latency">— ms</span> per frame</div>
+      </article>
+      <article class="metric-card">
+        <div class="metric-label">REGISTERED ITEMS</div>
+        <div class="metric-value" id="asset-count">0</div>
+        <div class="metric-foot"><span id="present-count">0 present</span></div>
+      </article>
+      <article class="metric-card">
+        <div class="metric-label">COMPUTE</div>
+        <div class="metric-value metric-device" id="device-name">Detecting</div>
+        <div class="metric-foot" id="device-foot">GPU when available</div>
+      </article>
+    </section>
+
+    <section class="workspace-grid">
+      <article class="panel camera-panel">
+        <div class="panel-head">
+          <div><div class="eyebrow">CAMERA FEED</div><h2>Scene view</h2></div>
+          <div class="live-chip"><span class="pulse"></span> LIVE</div>
+        </div>
+        <div class="video-wrap" id="video-wrap">
+          <img id="video-feed" src="/video_feed" alt="USB webcam stream">
+          <canvas id="selection-canvas"></canvas>
+          <div id="video-hint" class="video-hint">Click a detected box to select it, or drag a box around any object.</div>
+        </div>
+        <div class="video-legend">
+          <span><i class="legend-dot green"></i> Registered</span>
+          <span><i class="legend-dot amber"></i> Unregistered</span>
+          <span><i class="legend-dot purple"></i> Manual tracker</span>
+          <span><i class="legend-dot cyan"></i> Recovered</span>
+        </div>
+
+        <div id="selection-info" class="selection-info">No object selected. Click a box or draw around an object.</div>
+
+        <div class="register-form">
+          <div class="form-heading">
+            <div><h3>Register an item</h3><p>Name the physical item once; AI detection runs automatically afterward.</p></div>
+            <span class="step-pill">01 / SELECT</span>
+          </div>
+          <div class="form-grid">
+            <label>Item name<input id="asset-name" maxlength="60" placeholder="e.g. Dhyey's black bottle"></label>
+            <label>Object type<input id="asset-category" maxlength="40" placeholder="Auto from detector or custom"></label>
+          </div>
+          <button id="register-btn" class="btn btn-primary" disabled>＋ Register selected item</button>
+          <div class="microcopy">Tip: after registering, add 4–6 reference angles for best viewpoint robustness.</div>
+        </div>
+        <div id="runtime-warning" class="warning hidden"></div>
+      </article>
+
+      <aside class="side-column">
+        <article class="panel side-panel">
+          <div class="panel-head">
+            <div><div class="eyebrow">MONITORING</div><h2>Item status</h2></div>
+            <span class="counter" id="status-counter">0</span>
+          </div>
+          <div id="assets-list" class="assets-list">
+            <div class="empty-state">Register your first item from the live feed.</div>
+          </div>
+        </article>
+        <article class="panel side-panel events-panel">
+          <div class="panel-head">
+            <div><div class="eyebrow">AUDIT TRAIL</div><h2>Recent alerts</h2></div>
+            <span class="counter" id="event-counter">0</span>
+          </div>
+          <div id="events-list" class="events-list">
+            <div class="empty-state">No events yet.</div>
+          </div>
+        </article>
+      </aside>
+    </section>
+
+    <section class="bottom-grid">
+      <article class="info-card">
+        <div class="info-icon">◎</div>
+        <div><h3>Identity-aware, not just class-aware</h3>
+          <p>"Bottle" is a class, not an identity. AssetWatch uses deep features + colour + keypoints and declines ambiguous matches. The gallery auto-learns new angles over time.</p>
+        </div>
+      </article>
+      <article class="info-card">
+        <div class="info-icon">◴</div>
+        <div><h3>Camera health gates alerts</h3>
+          <p>A disconnected or stale camera suspends missing-item decisions. Short gaps = <b>CHECKING</b>; confirmed absence = <b>MISSING</b>.</p>
+        </div>
+      </article>
+    </section>
+    <footer>Runs locally · First startup downloads model weights · Similarity is a score, not a probability · Keep camera fixed for movement alerts</footer>
+  </main>
+</div>
+
+<div id="toast-region" class="toast-region" aria-live="polite"></div>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
